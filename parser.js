@@ -43,6 +43,21 @@ const PALAVRAS_RECEITA = ['recebi', 'ganhei', 'entrei', 'entrada', 'salario', 'p
 const PALAVRAS_DESPESA = ['gastei', 'gasto', 'paguei', 'pago', 'comprei', 'compra', 'fiei', 'fiado', 'devo', 'gaste', 'gasta'];
 const PALAVRAS_CARTAO = ['cartao', 'credito', 'fatura', 'parcela', 'parcial'];
 
+const MESES = {
+  janeiro: 1,
+  fevereiro: 2,
+  marco: 3,
+  abril: 4,
+  maio: 5,
+  junho: 6,
+  julho: 7,
+  agosto: 8,
+  setembro: 9,
+  outubro: 10,
+  novembro: 11,
+  dezembro: 12
+};
+
 function normalizar(texto) {
   return texto
     .toLowerCase()
@@ -95,6 +110,18 @@ function extrairNomeCartao(texto) {
     .replace(/fechamento.*$/, '')
     .replace(/fecha.*$/, '')
     .replace(/valor.*$/, '')
+    .replace(/hoje.*$/, '')
+    .replace(/ontem.*$/, '')
+    .replace(/anteontem.*$/, '')
+    .replace(/semana passada.*$/, '')
+    .replace(/semana anterior.*$/, '')
+    .replace(/semana.*$/, '')
+    .replace(/mes passado.*$/, '')
+    .replace(/mes anterior.*$/, '')
+    .replace(/mes.*$/, '')
+    .replace(/ano passado.*$/, '')
+    .replace(/ano anterior.*$/, '')
+    .replace(/ano.*$/, '')
     .trim();
 
   for (const palavra of Object.keys(CATEGORIAS)) {
@@ -106,8 +133,7 @@ function extrairNomeCartao(texto) {
 }
 
 function identificarConsulta(texto) {
-  const temValor = /\d+[.,]?\d*/.test(texto);
-  if (temValor) return null;
+  const periodo = identificarPeriodo(texto);
 
   if (texto.includes('ajuda') || texto.includes('comandos')) return { tipo: 'ajuda' };
   if (
@@ -121,28 +147,57 @@ function identificarConsulta(texto) {
     return { tipo: 'listar_cartoes' };
   }
   if (texto.includes('fatura') || texto.includes('cartao de credito') || texto.includes('cartao credito')) {
-    return { tipo: 'fatura', cartao: extrairNomeCartao(texto) };
+    return { tipo: 'fatura', cartao: extrairNomeCartao(texto), periodo };
   }
-  if (texto.includes('extrato') || texto.includes('ultimos')) return { tipo: 'extrato' };
+  if (texto.includes('extrato') || texto.includes('ultimos')) return { tipo: 'extrato', periodo };
   if (texto.includes('saldo') || texto.includes('quanto')) {
     if (texto.includes('gasto') || texto.includes('gastei') || texto.includes('gastos')) {
-      return { tipo: 'consulta', o: 'gastos', periodo: identificarPeriodo(texto) };
+      return { tipo: 'consulta', o: 'gastos', periodo };
     }
     if (texto.includes('receita') || texto.includes('receitas')) {
-      return { tipo: 'consulta', o: 'receitas', periodo: identificarPeriodo(texto) };
+      return { tipo: 'consulta', o: 'receitas', periodo };
     }
-    return { tipo: 'saldo' };
+    return { tipo: 'saldo', periodo };
   }
-  if (texto.includes('gastos')) return { tipo: 'consulta', o: 'gastos', periodo: identificarPeriodo(texto) };
-  if (texto.includes('receita') || texto.includes('receitas')) return { tipo: 'consulta', o: 'receitas', periodo: identificarPeriodo(texto) };
+  if (texto.includes('gastos')) return { tipo: 'consulta', o: 'gastos', periodo };
+  if (texto.includes('receita') || texto.includes('receitas')) return { tipo: 'consulta', o: 'receitas', periodo };
 
   return null;
 }
 
 function identificarPeriodo(texto) {
-  if (texto.includes('semana')) return 'semana';
-  if (texto.includes('hoje')) return 'hoje';
-  return 'mes';
+  const dataCompleta = texto.match(/\b(\d{1,2})[\/.-](\d{1,2})(?:[\/.-](\d{2,4}))?\b/);
+  if (dataCompleta) {
+    return {
+      tipo: 'dia_especifico',
+      dia: Number(dataCompleta[1]),
+      mes: Number(dataCompleta[2]),
+      ano: dataCompleta[3] ? normalizarAno(dataCompleta[3]) : null
+    };
+  }
+
+  for (const [nome, numero] of Object.entries(MESES)) {
+    if (texto.includes(nome)) {
+      const anoMatch = texto.match(new RegExp(nome + '\\s+(\\d{4})')) || texto.match(/\b(20\d{2})\b/);
+      return { tipo: 'mes_especifico', mes: numero, ano: anoMatch ? Number(anoMatch[1]) : null };
+    }
+  }
+
+  if (texto.includes('ontem')) return { tipo: 'ontem' };
+  if (texto.includes('anteontem')) return { tipo: 'anteontem' };
+  if (texto.includes('hoje')) return { tipo: 'hoje' };
+  if (texto.includes('semana passada') || texto.includes('semana anterior')) return { tipo: 'semana_passada' };
+  if (texto.includes('semana')) return { tipo: 'semana' };
+  if (texto.includes('mes passado') || texto.includes('mes anterior')) return { tipo: 'mes_passado' };
+  if (texto.includes('mes')) return { tipo: 'mes' };
+  if (texto.includes('ano passado') || texto.includes('ano anterior')) return { tipo: 'ano_passado' };
+  if (texto.includes('ano')) return { tipo: 'ano' };
+  return { tipo: 'mes' };
+}
+
+function normalizarAno(ano) {
+  const valor = Number(ano);
+  return valor < 100 ? 2000 + valor : valor;
 }
 
 function parsearCadastroCartao(texto) {

@@ -32,10 +32,10 @@ Nao entendi sua mensagem. Tente:
   }
 
   if (parsed.tipo === 'ajuda') return getTextoAjuda();
-  if (parsed.tipo === 'saldo') return responderSaldo(userId);
-  if (parsed.tipo === 'extrato') return responderExtrato(userId);
-  if (parsed.tipo === 'fatura') return responderFatura(userId, parsed.cartao);
-  if (parsed.tipo === 'listar_cartoes') return responderCartoes(userId);
+  if (parsed.tipo === 'saldo') return responderSaldo(userId, parsed.periodo);
+  if (parsed.tipo === 'extrato') return responderExtrato(userId, parsed.periodo);
+  if (parsed.tipo === 'fatura') return responderFatura(userId, parsed.cartao, parsed.periodo);
+  if (parsed.tipo === 'listar_cartoes') return responderCartoes(userId, parsed.periodo);
   if (parsed.tipo === 'cadastrar_cartao') return cadastrarCartao(userId, parsed);
   if (parsed.tipo === 'editar_cartao') return editarCartao(userId, parsed);
   if (parsed.tipo === 'excluir_cartao') return excluirCartao(userId, parsed);
@@ -44,15 +44,17 @@ Nao entendi sua mensagem. Tente:
 
   if (parsed.tipo === 'consulta') {
     if (parsed.o === 'gastos') {
-      const total = await getTotalPorTipo(userId, 'despesa');
-      return `*Gastos no periodo*
+      const intervalo = resolverIntervalo(parsed.periodo);
+      const total = await getTotalPorTipo(userId, 'despesa', intervalo);
+      return `*Gastos - ${intervalo.rotulo}*
 
 Total: ${formatarMoeda(total)}`;
     }
 
     if (parsed.o === 'receitas') {
-      const total = await getTotalPorTipo(userId, 'receita');
-      return `*Receitas no periodo*
+      const intervalo = resolverIntervalo(parsed.periodo);
+      const total = await getTotalPorTipo(userId, 'receita', intervalo);
+      return `*Receitas - ${intervalo.rotulo}*
 
 Total: ${formatarMoeda(total)}`;
     }
@@ -219,16 +221,16 @@ async function excluirCartao(userId, parsed) {
   await run(getDb(), 'UPDATE cartoes_credito SET ativo = 0 WHERE id = ? AND usuario_id = ?', [cartao.id, userId]);
   return `Cartao ${cartao.nome} removido da sua lista. Os lancamentos antigos continuam no extrato.`;
 }
-async function responderCartoes(userId) {
-  const cartoes = await all(getDb(), `
-    SELECT c.*,
-      COALESCE(SUM(CASE WHEN l.tipo = 'cartao' THEN l.valor ELSE 0 END), 0) as fatura
-    FROM cartoes_credito c
-    LEFT JOIN lancamentos l ON l.cartao_id = c.id
-    WHERE c.usuario_id = ? AND c.ativo = 1
-    GROUP BY c.id
-    ORDER BY c.nome
-  `, [userId]);
+async function responderCartoes(userId, periodo) {
+  const intervalo = resolverIntervalo(periodo);
+  const cartoesBase = await all(getDb(), 'SELECT * FROM cartoes_credito WHERE usuario_id = ? AND ativo = 1 ORDER BY nome', [userId]);
+  const lancamentosCartao = await listarLancamentos(userId, intervalo, { tipo: 'cartao' });
+  const cartoes = cartoesBase.map(c => ({
+    ...c,
+    fatura: lancamentosCartao
+      .filter(l => Number(l.cartao_id || 0) === Number(c.id))
+      .reduce((sum, l) => sum + Number(l.valor || 0), 0)
+  }));
 
   if (cartoes.length === 0) {
     return 'Nenhum cartao cadastrado ainda. Exemplo: "cadastrar cartao Nubank limite 4000 vencimento 10"';
@@ -248,27 +250,20 @@ async function responderCartoes(userId) {
   return `*Meus cartoes*\n\n${blocos}\n\n*Resumo*\nFatura total: ${formatarMoeda(totalFatura)}\nLimite total: ${formatarMoeda(totalLimite)}\nDisponivel total: ${formatarMoeda(totalLimite - totalFatura)}`;
 }
 
-async function responderFatura(userId, nomeCartao) {
-  const params = [userId];
-  let filtroCartao = '';
-
-  if (nomeCartao) {
-    filtroCartao = 'AND lower(c.nome) LIKE ?';
-    params.push(`%${nomeCartao.toLowerCase()}%`);
-  }
-
-  const rows = await all(getDb(), `
-    SELECT
-      c.nome as cartao,
-      COALESCE(c.limite, 0) as limite,
-      c.dia_vencimento,
-      COALESCE(SUM(CASE WHEN l.tipo = 'cartao' THEN l.valor ELSE 0 END), 0) as total
-    FROM cartoes_credito c
-    LEFT JOIN lancamentos l ON l.cartao_id = c.id
-    WHERE c.usuario_id = ? AND c.ativo = 1 ${filtroCartao}
-    GROUP BY c.id, c.nome, c.limite, c.dia_vencimento
-    ORDER BY c.nome
-  `, params);
+async function responderFatura(userId, nomeCartao, periodo) {
+  const intervalo = resolverIntervalo(periodo);
+  const cartoes = await all(getDb(), 'SELECT * FROM cartoes_credito WHERE usuario_id = ? AND ativo = 1 ORDER BY nome', [userId]);
+  const lancamentosCartao = await listarLancamentos(userId, intervalo, { tipo: 'cartao' });
+  const rows = cartoes
+    .filter(c => !nomeCartao || c.nome.toLowerCase().includes(nomeCartao.toLowerCase()))
+    .map(c => ({
+      cartao: c.nome,
+      limite: c.limite,
+      dia_vencimento: c.dia_vencimento,
+      total: lancamentosCartao
+        .filter(l => Number(l.cartao_id || 0) === Number(c.id))
+        .reduce((sum, l) => sum + Number(l.valor || 0), 0)
+    }));
 
   if (rows.length === 0) {
     return nomeCartao
@@ -282,7 +277,7 @@ async function responderFatura(userId, nomeCartao) {
   }).join('\n');
 
   const total = rows.reduce((sum, r) => sum + Number(r.total || 0), 0);
-  return `*Fatura de cartao*
+  return `*Fatura de cartao - ${intervalo.rotulo}*
 
 ${texto}
 
@@ -350,11 +345,12 @@ async function excluirLancamento(userId, parsed) {
   return `Lancamento ${lancamento.id} apagado: ${formatarMoeda(lancamento.valor)} - ${lancamento.descricao}`;
 }
 
-async function responderSaldo(userId) {
-  const saldo = await getSaldo(userId);
-  const fatura = await getTotalPorTipo(userId, 'cartao');
+async function responderSaldo(userId, periodo) {
+  const intervalo = resolverIntervalo(periodo);
+  const saldo = await getSaldo(userId, intervalo);
+  const fatura = await getTotalPorTipo(userId, 'cartao', intervalo);
 
-  return `*Saldo Atual*
+  return `*Saldo - ${intervalo.rotulo}*
 
 Receitas: ${formatarMoeda(saldo.receitas)}
 Despesas pagas: ${formatarMoeda(saldo.despesas)}
@@ -362,9 +358,10 @@ Fatura cartao: ${formatarMoeda(fatura)}
 *Saldo sem cartao: ${formatarMoeda(saldo.saldo)}*`;
 }
 
-async function responderExtrato(userId) {
-  const extrato = await getExtrato(userId);
-  if (extrato.length === 0) return 'Nenhum lancamento encontrado.';
+async function responderExtrato(userId, periodo) {
+  const intervalo = resolverIntervalo(periodo);
+  const extrato = await getExtrato(userId, 20, intervalo);
+  if (extrato.length === 0) return `Nenhum lancamento encontrado em ${intervalo.rotulo}.`;
 
   const texto = extrato.map(l => {
     const sinal = l.tipo === 'receita' ? '+' : '-';
@@ -372,43 +369,45 @@ async function responderExtrato(userId) {
     return `#${l.id} ${sinal} ${formatarMoeda(l.valor)} | ${nomeForma(l.forma_pagamento)}${cartao} | ${l.descricao}`;
   }).join('\n');
 
-  return `*Ultimos lancamentos*\n\n${texto}`;
+  return `*Extrato - ${intervalo.rotulo}*\n\n${texto}`;
 }
 
-async function getSaldo(userId) {
-  const result = await get(getDb(), `
-    SELECT
-      COALESCE(SUM(CASE WHEN tipo = 'receita' THEN valor ELSE 0 END), 0) as receitas,
-      COALESCE(SUM(CASE WHEN tipo = 'despesa' THEN valor ELSE 0 END), 0) as despesas
-    FROM lancamentos
-    WHERE usuario_id = ?
-  `, [userId]);
+async function getSaldo(userId, intervalo) {
+  const lancamentos = await listarLancamentos(userId, intervalo);
+  const receitas = lancamentos.filter(l => l.tipo === 'receita').reduce((sum, l) => sum + Number(l.valor || 0), 0);
+  const despesas = lancamentos.filter(l => l.tipo === 'despesa').reduce((sum, l) => sum + Number(l.valor || 0), 0);
 
   return {
-    receitas: Number(result.receitas || 0),
-    despesas: Number(result.despesas || 0),
-    saldo: Number(result.receitas || 0) - Number(result.despesas || 0)
+    receitas,
+    despesas,
+    saldo: receitas - despesas
   };
 }
 
-async function getExtrato(userId, limite = 10) {
-  return all(getDb(), `
+async function getExtrato(userId, limite = 10, intervalo) {
+  const lancamentos = await listarLancamentos(userId, intervalo);
+  return lancamentos.slice(0, limite);
+}
+
+async function getTotalPorTipo(userId, tipo, intervalo) {
+  const lancamentos = await listarLancamentos(userId, intervalo, { tipo });
+  return lancamentos.reduce((sum, l) => sum + Number(l.valor || 0), 0);
+}
+
+async function listarLancamentos(userId, intervalo, filtros = {}) {
+  const rows = await all(getDb(), `
     SELECT l.*, c.nome as cartao_nome
     FROM lancamentos l
     LEFT JOIN cartoes_credito c ON c.id = l.cartao_id
     WHERE l.usuario_id = ?
     ORDER BY l.criado_em DESC, l.id DESC
     LIMIT ?
-  `, [userId, limite]);
-}
+  `, [userId, 1000]);
 
-async function getTotalPorTipo(userId, tipo) {
-  const result = await get(getDb(), `
-    SELECT COALESCE(SUM(valor), 0) as total
-    FROM lancamentos
-    WHERE usuario_id = ? AND tipo = ?
-  `, [userId, tipo]);
-  return Number(result.total || 0);
+  return rows.filter(l => {
+    if (filtros.tipo && l.tipo !== filtros.tipo) return false;
+    return estaNoIntervalo(l.data_lancamento || l.criado_em, intervalo);
+  });
 }
 
 async function obterCartaoParaLancamento(userId, nomeCartao) {
@@ -471,6 +470,87 @@ async function getLancamentoComCartao(userId, id) {
   `, [userId, id]);
 }
 
+function resolverIntervalo(periodo) {
+  const hoje = inicioDoDia(new Date());
+  const tipo = periodo?.tipo || 'mes';
+
+  if (tipo === 'hoje') return criarIntervalo(hoje, hoje, 'hoje');
+  if (tipo === 'ontem') return criarIntervalo(adicionarDias(hoje, -1), adicionarDias(hoje, -1), 'ontem');
+  if (tipo === 'anteontem') return criarIntervalo(adicionarDias(hoje, -2), adicionarDias(hoje, -2), 'anteontem');
+
+  if (tipo === 'semana' || tipo === 'semana_passada') {
+    const inicio = inicioDaSemana(hoje);
+    const start = tipo === 'semana_passada' ? adicionarDias(inicio, -7) : inicio;
+    const end = tipo === 'semana_passada' ? adicionarDias(inicio, -1) : hoje;
+    return criarIntervalo(start, end, tipo === 'semana_passada' ? 'semana passada' : 'esta semana');
+  }
+
+  if (tipo === 'mes' || tipo === 'mes_passado') {
+    const base = tipo === 'mes_passado' ? new Date(hoje.getFullYear(), hoje.getMonth() - 1, 1) : hoje;
+    const start = new Date(base.getFullYear(), base.getMonth(), 1);
+    const end = tipo === 'mes_passado' ? new Date(base.getFullYear(), base.getMonth() + 1, 0) : hoje;
+    return criarIntervalo(start, end, tipo === 'mes_passado' ? 'mes passado' : 'este mes');
+  }
+
+  if (tipo === 'ano' || tipo === 'ano_passado') {
+    const ano = hoje.getFullYear() + (tipo === 'ano_passado' ? -1 : 0);
+    return criarIntervalo(new Date(ano, 0, 1), tipo === 'ano_passado' ? new Date(ano, 11, 31) : hoje, tipo === 'ano_passado' ? 'ano passado' : 'este ano');
+  }
+
+  if (tipo === 'mes_especifico') {
+    const ano = periodo.ano || hoje.getFullYear();
+    const start = new Date(ano, periodo.mes - 1, 1);
+    const end = new Date(ano, periodo.mes, 0);
+    return criarIntervalo(start, end, nomeMes(periodo.mes) + ' de ' + ano);
+  }
+
+  if (tipo === 'dia_especifico') {
+    const ano = periodo.ano || hoje.getFullYear();
+    const data = new Date(ano, periodo.mes - 1, periodo.dia);
+    return criarIntervalo(data, data, formatarData(data));
+  }
+
+  return criarIntervalo(new Date(hoje.getFullYear(), hoje.getMonth(), 1), hoje, 'este mes');
+}
+
+function criarIntervalo(inicio, fim, rotulo) {
+  return { inicio: inicioDoDia(inicio), fim: fimDoDia(fim), rotulo };
+}
+
+function estaNoIntervalo(valorData, intervalo) {
+  if (!intervalo) return true;
+  const data = new Date(valorData);
+  if (Number.isNaN(data.getTime())) return false;
+  return data >= intervalo.inicio && data <= intervalo.fim;
+}
+
+function inicioDoDia(data) {
+  return new Date(data.getFullYear(), data.getMonth(), data.getDate());
+}
+
+function fimDoDia(data) {
+  return new Date(data.getFullYear(), data.getMonth(), data.getDate(), 23, 59, 59, 999);
+}
+
+function adicionarDias(data, dias) {
+  return new Date(data.getFullYear(), data.getMonth(), data.getDate() + dias);
+}
+
+function inicioDaSemana(data) {
+  const inicio = inicioDoDia(data);
+  const dia = inicio.getDay();
+  const deslocamento = dia === 0 ? -6 : 1 - dia;
+  return adicionarDias(inicio, deslocamento);
+}
+
+function nomeMes(mes) {
+  const nomes = ['janeiro', 'fevereiro', 'marco', 'abril', 'maio', 'junho', 'julho', 'agosto', 'setembro', 'outubro', 'novembro', 'dezembro'];
+  return nomes[mes - 1] || 'mes';
+}
+
+function formatarData(data) {
+  return String(data.getDate()).padStart(2, '0') + '/' + String(data.getMonth() + 1).padStart(2, '0') + '/' + data.getFullYear();
+}
 function formatarMoeda(valor) {
   return `R$ ${Number(valor || 0).toFixed(2)}`;
 }

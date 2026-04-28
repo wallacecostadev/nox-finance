@@ -138,6 +138,14 @@ function extrairNomeCartao(texto) {
     .replace(/\s+(em|dia)\s+\d.*$/, '')
     .trim();
 
+  nome = nome
+    .replace(/^credito\b/, '')
+    .replace(/^de\s+credito\b/, '')
+    .replace(/\b\d+[.,]?\d*\s*(reais|real)?\b.*$/, '')
+    .replace(/^\s*(de|do|da)\b\s*/g, '')
+    .replace(/\s+(de|do|da)\s*$/g, '')
+    .trim();
+
   for (const palavra of Object.keys(CATEGORIAS)) {
     nome = nome.replace(new RegExp(`\\s+(no|na|em|de|do|da)?\\s*${palavra}.*$`), '').trim();
   }
@@ -148,6 +156,7 @@ function extrairNomeCartao(texto) {
 
 function identificarConsulta(texto) {
   const periodo = identificarPeriodo(texto);
+  if (pareceLancamentoComValor(texto)) return null;
 
   if (texto.includes('ajuda') || texto.includes('comandos')) return { tipo: 'ajuda' };
   if (
@@ -228,6 +237,12 @@ function identificarPeriodo(texto) {
   if (texto.includes('ano passado') || texto.includes('ano anterior')) return { tipo: 'ano_passado' };
   if (texto.includes('ano')) return { tipo: 'ano' };
   return { tipo: 'mes' };
+}
+
+function pareceLancamentoComValor(texto) {
+  const temValor = extrairValor(texto) !== null;
+  const temAcaoLancamento = [...PALAVRAS_RECEITA, ...PALAVRAS_DESPESA].some(p => texto.includes(p));
+  return temValor && temAcaoLancamento;
 }
 
 function extrairDataLancamento(texto) {
@@ -481,6 +496,7 @@ function limparDescricao(texto) {
 function finalizarDescricao(descricao) {
   return String(descricao || '')
     .replace(/\b(reais|real)\b/g, '')
+    .replace(/\bcredito\b/g, '')
     .replace(/\b(no|na|de|do|da|em)\b/g, '')
     .replace(/\s+/g, ' ')
     .replace(/^com\s+/g, '')

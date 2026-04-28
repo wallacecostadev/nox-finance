@@ -246,6 +246,7 @@ async function runSupabase(db, sql, params = []) {
   if (normalized.includes('update cartoes_credito set')) {
     const update = {};
     let index = 0;
+    if (normalized.includes('nome = ?')) update.nome = params[index++];
     if (normalized.includes('limite = ?')) update.limite = params[index++];
     if (normalized.includes('dia_vencimento = ?')) update.dia_vencimento = params[index++];
     if (normalized.includes('dia_fechamento = ?')) update.dia_fechamento = params[index++];

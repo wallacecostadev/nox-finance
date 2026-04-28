@@ -6,8 +6,10 @@
 require('dotenv').config();
 const express = require('express');
 const axios = require('axios');
+const XLSX = require('xlsx');
 const { initDB } = require('./db');
 const { processarMensagem, setDbInstance } = require('./routes');
+const { extrairDadosMensais, importarSupabase } = require('./scripts/import-planilha-2026');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -21,6 +23,7 @@ const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
 const TRANSCRIPTION_MODEL = process.env.TRANSCRIPTION_MODEL || 'gpt-4o-mini-transcribe';
 const GROQ_API_KEY = process.env.GROQ_API_KEY;
 const GROQ_TRANSCRIPTION_MODEL = process.env.GROQ_TRANSCRIPTION_MODEL || 'whisper-large-v3-turbo';
+const aguardandoPlanilha = new Map();
 
 // Middleware
 app.use(express.json());
@@ -40,10 +43,29 @@ app.post('/webhook', async (req, res) => {
       return res.json({ success: true, ignored: true, reason: 'Mensagem enviada pelo proprio numero' });
     }
 
-    const { phone, message, audioUrl, mimeType } = extrairMensagemRecebida(req.body);
+    const { phone, message, audioUrl, documentUrl, fileName, mimeType } = extrairMensagemRecebida(req.body);
 
-    if (!phone || (!message && !audioUrl)) {
+    if (!phone || (!message && !audioUrl && !documentUrl)) {
       return res.json({ success: true, ignored: true, reason: 'Evento sem texto para processar' });
+    }
+
+    if (message && ehPedidoImportarPlanilha(message)) {
+      aguardandoPlanilha.set(phone, Date.now());
+      const resposta = 'Pode enviar a planilha agora. Vou importar os lancamentos pagos e os parcelamentos ativos para este numero.';
+      await enviarMensagem(phone, resposta);
+      return res.json({ success: true, resposta });
+    }
+
+    if (documentUrl) {
+      if (!ehPlanilha(fileName, mimeType, documentUrl)) {
+        return res.json({ success: true, ignored: true, reason: 'Arquivo recebido nao e planilha' });
+      }
+
+      await enviarMensagem(phone, 'Recebi a planilha. Vou ler e importar os dados agora.');
+      const resposta = await importarPlanilhaRecebida(phone, documentUrl);
+      aguardandoPlanilha.delete(phone);
+      await enviarMensagem(phone, resposta);
+      return res.json({ success: true, resposta });
     }
 
     let mensagemProcessada = message;
@@ -109,15 +131,71 @@ function extrairMensagemRecebida(body) {
 
   const mimeType =
     body.audio?.mimeType ||
+    body.document?.mimeType ||
+    body.file?.mimeType ||
     body.mimeType ||
     'audio/ogg';
+
+  const documentUrl =
+    body.document?.documentUrl ||
+    body.document?.url ||
+    body.file?.url ||
+    body.fileUrl ||
+    body.documentUrl;
+
+  const fileName =
+    body.document?.fileName ||
+    body.document?.filename ||
+    body.file?.fileName ||
+    body.file?.filename ||
+    body.fileName ||
+    body.filename;
 
   return {
     phone: phone ? String(phone).replace(/\D/g, '') : null,
     message: message ? String(message).trim() : null,
     audioUrl,
+    documentUrl,
+    fileName,
     mimeType
   };
+}
+
+function ehPedidoImportarPlanilha(message) {
+  const texto = String(message || '')
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '');
+
+  return texto.includes('planilha') && /(importar|usar|atualizar|subir|carregar)/.test(texto);
+}
+
+function ehPlanilha(fileName, mimeType, url) {
+  const alvo = `${fileName || ''} ${mimeType || ''} ${url || ''}`.toLowerCase();
+  return alvo.includes('.xlsx') ||
+    alvo.includes('.xls') ||
+    alvo.includes('spreadsheet') ||
+    alvo.includes('excel');
+}
+
+async function importarPlanilhaRecebida(phone, documentUrl) {
+  const response = await axios.get(documentUrl, {
+    responseType: 'arraybuffer',
+    headers: ZAPI_CLIENT_TOKEN ? { 'Client-Token': ZAPI_CLIENT_TOKEN } : undefined
+  });
+
+  const workbook = XLSX.read(Buffer.from(response.data), { type: 'buffer' });
+  const { lancamentos, parcelamentos } = extrairDadosMensais(workbook);
+  const resultado = await importarSupabase(lancamentos, parcelamentos, { whatsappId: phone });
+
+  return `*Planilha importada*
+
+Lancamentos novos: ${resultado.inseridos}
+Lancamentos duplicados: ${resultado.ignorados}
+Parcelamentos novos: ${resultado.parcelamentosInseridos}
+Parcelamentos duplicados: ${resultado.parcelamentosIgnorados}
+
+Agora voce pode consultar: "saldo", "extrato do mes", "fatura" ou "parcelamentos".`;
 }
 
 async function transcreverAudio(audioUrl, mimeType = 'audio/ogg') {

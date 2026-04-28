@@ -345,12 +345,12 @@ function arredondar(valor) {
   return Math.round(valor * 100) / 100;
 }
 
-async function obterUsuario(client) {
-  const { data: existente, error: erroBusca } = await client.from('usuarios').select('*').eq('whatsapp_id', whatsappId).maybeSingle();
+async function obterUsuario(client, whatsappIdImportacao = whatsappId) {
+  const { data: existente, error: erroBusca } = await client.from('usuarios').select('*').eq('whatsapp_id', whatsappIdImportacao).maybeSingle();
   if (erroBusca) throw erroBusca;
   if (existente) return existente;
 
-  const { data, error } = await client.from('usuarios').insert({ whatsapp_id: whatsappId, nome: 'Wallace' }).select('*').single();
+  const { data, error } = await client.from('usuarios').insert({ whatsapp_id: whatsappIdImportacao, nome: 'Usuario' }).select('*').single();
   if (error) throw error;
   return data;
 }
@@ -375,13 +375,13 @@ async function obterCartoes(client, usuarioId, lancamentos, parcelamentos) {
   return cartoes;
 }
 
-async function importarSupabase(lancamentos, parcelamentos) {
+async function importarSupabase(lancamentos, parcelamentos, options = {}) {
   if (!process.env.SUPABASE_URL || !process.env.SUPABASE_KEY) {
     throw new Error('Configure SUPABASE_URL e SUPABASE_KEY para importar.');
   }
 
   const client = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_KEY);
-  const usuario = await obterUsuario(client);
+  const usuario = await obterUsuario(client, options.whatsappId || whatsappId);
   const cartoes = await obterCartoes(client, usuario.id, lancamentos, parcelamentos);
 
   const { data: existentes, error: erroExistentes } = await client
@@ -492,7 +492,16 @@ async function main() {
   console.log(`Importacao concluida. Lancamentos inseridos: ${resultado.inseridos}. Lancamentos duplicados: ${resultado.ignorados}. Parcelamentos inseridos: ${resultado.parcelamentosInseridos}. Parcelamentos duplicados: ${resultado.parcelamentosIgnorados}.`);
 }
 
-main().catch(error => {
-  console.error(error);
-  process.exit(1);
-});
+if (require.main === module) {
+  main().catch(error => {
+    console.error(error);
+    process.exit(1);
+  });
+}
+
+module.exports = {
+  extrairDadosMensais,
+  importarSupabase,
+  resumir,
+  resumirParcelamentos
+};

@@ -104,6 +104,8 @@ function extrairNomeCartao(texto) {
   if (!match) return null;
 
   let nome = match[1]
+    .replace(/^cartao\s+/, '')
+    .replace(/\s+(com|para|por)\s+.*$/, '')
     .replace(/limite.*$/, '')
     .replace(/vencimento.*$/, '')
     .replace(/vence.*$/, '')
@@ -161,6 +163,12 @@ function identificarConsulta(texto) {
     texto.includes('listar cartoes')
   ) {
     return { tipo: 'listar_cartoes' };
+  }
+  if (
+    (texto.includes('fatura') || texto.includes('cartao')) &&
+    /(detalhe|detalhada|detalhes|transacao|transacoes|historico|movimentacao|movimentacoes)/.test(texto)
+  ) {
+    return { tipo: 'detalhe_fatura', cartao: extrairNomeCartao(texto), periodo };
   }
   if (texto.includes('fatura') || texto.includes('cartao de credito') || texto.includes('cartao credito')) {
     return { tipo: 'fatura', cartao: extrairNomeCartao(texto), periodo };
@@ -342,15 +350,18 @@ function limparDescricaoParcelamento(texto, cartao) {
 
 function parsearEdicaoCartao(texto) {
   const mencionaCartao = /(cartao|credito)/.test(texto);
-  const ehEdicao = /(editar|edite|alterar|altere|mudar|mude|ajustar|ajuste|corrigir|corrija|atualizar|atualize)/.test(texto);
-  const temCampoCartao = /(limite|vencimento|vence|fechamento|fecha)/.test(texto);
+  const ehEdicao = /(editar|edite|alterar|altere|mudar|mude|ajustar|ajuste|corrigir|corrija|atualizar|atualize|renomear|renomeie)/.test(texto);
+  const temCampoCartao = /(limite|vencimento|vence|fechamento|fecha|nome|renomear|renomeie|chamar|chame)/.test(texto);
 
   if (!mencionaCartao || !ehEdicao || !temCampoCartao) return null;
+
+  const novoNome = extrairNovoNomeCartao(texto);
 
   return {
     tipo: 'editar_cartao',
     id: extrairIdCartao(texto),
     nome: extrairNomeCartaoParaComando(texto),
+    novoNome,
     limite: extrairNumeroDepoisDe(texto, 'limite'),
     vencimento: extrairNumeroDepoisDe(texto, 'vencimento') || extrairNumeroDepoisDe(texto, 'vence'),
     fechamento: extrairNumeroDepoisDe(texto, 'fechamento') || extrairNumeroDepoisDe(texto, 'fecha')
@@ -386,10 +397,21 @@ function limparNomeCartaoCadastro(nome) {
   return limpo || null;
 }
 
+function extrairNovoNomeCartao(texto) {
+  const match = texto.match(/\b(?:nome|renomear(?:\s+para)?|renomeie(?:\s+para)?|chamar\s+de|chame\s+de|para)\s+([a-z0-9 ]+?)(?:\s+limite|\s+vencimento|\s+vence|\s+fechamento|\s+fecha|$)/);
+  if (!match) return null;
+
+  return limparNomeCartaoCadastro(match[1]);
+}
+
 function extrairNomeCartaoParaComando(texto) {
-  const semAcoes = texto
-    .replace(/\b(editar|edite|alterar|altere|mudar|mude|ajustar|ajuste|corrigir|corrija|atualizar|atualize|apagar|excluir|deletar|remover|cancelar)\b/g, '')
-    .replace(/\b(limite|vencimento|vence|fechamento|fecha|para|de|do|da|com|valor|dia)\b/g, '')
+  let base = texto;
+  const corteNovoNome = base.search(/\b(nome|renomear|renomeie|chamar\s+de|chame\s+de|para)\b/);
+  if (corteNovoNome > -1) base = base.slice(0, corteNovoNome);
+
+  const semAcoes = base
+    .replace(/\b(editar|edite|alterar|altere|mudar|mude|ajustar|ajuste|corrigir|corrija|atualizar|atualize|renomear|renomeie|apagar|excluir|deletar|remover|cancelar)\b/g, '')
+    .replace(/\b(limite|vencimento|vence|fechamento|fecha|nome|renomear|renomeie|chamar|chame|para|de|do|da|com|valor|dia)\b/g, '')
     .replace(/(?:#|id\s*)?\d+[.,]?\d*/g, '')
     .replace(/\b(cartao|credito)\b/g, '')
     .replace(/\s+/g, ' ')
@@ -440,7 +462,18 @@ function limparDescricao(texto) {
     .replace(/\s+/g, ' ')
     .trim();
 
-  return /^(no|na|de|do|da|em|com)$/.test(descricao) ? '' : descricao;
+  const final = finalizarDescricao(descricao);
+  return /^(no|na|de|do|da|em|com)$/.test(final) ? '' : final;
+}
+
+function finalizarDescricao(descricao) {
+  return String(descricao || '')
+    .replace(/\b(reais|real)\b/g, '')
+    .replace(/\b(no|na|de|do|da|em)\b/g, '')
+    .replace(/\s+/g, ' ')
+    .replace(/^com\s+/g, '')
+    .replace(/\s+com$/g, '')
+    .trim();
 }
 
 function parsearMensagem(mensagem) {
@@ -476,7 +509,7 @@ function parsearMensagem(mensagem) {
   const cartao = formaPagamento === 'credito' ? extrairNomeCartao(texto) : null;
   let descricao = limparDescricao(texto);
   if (cartao) {
-    descricao = descricao.replace(new RegExp(`\\b${cartao}\\b`, 'i'), '').replace(/\s+/g, ' ').trim();
+    descricao = finalizarDescricao(descricao.replace(new RegExp(`\\b${cartao}\\b`, 'i'), '').replace(/\s+/g, ' ').trim());
   }
 
   return {

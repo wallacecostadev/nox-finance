@@ -38,6 +38,7 @@ Tente um destes exemplos:
   if (parsed.tipo === 'saldo') return responderSaldo(userId, parsed.periodo);
   if (parsed.tipo === 'extrato') return responderExtrato(userId, parsed.periodo);
   if (parsed.tipo === 'fatura') return responderFatura(userId, parsed.cartao, parsed.periodo);
+  if (parsed.tipo === 'detalhe_fatura') return responderDetalheFatura(userId, parsed.cartao, parsed.periodo);
   if (parsed.tipo === 'listar_cartoes') return responderCartoes(userId, parsed.periodo);
   if (parsed.tipo === 'cadastrar_cartao') return cadastrarCartao(userId, parsed);
   if (parsed.tipo === 'editar_cartao') return editarCartao(userId, parsed);
@@ -136,6 +137,7 @@ async function registrarLancamento(userId, parsed) {
   let cartaoId = null;
   if (parsed.tipo === 'cartao') {
     const cartao = await obterCartaoParaLancamento(userId, parsed.cartao);
+    if (!cartao) return respostaCartaoNaoEncontrado(userId, parsed.cartao);
     cartaoId = cartao ? cartao.id : null;
   }
 
@@ -238,6 +240,17 @@ async function editarCartao(userId, parsed) {
   const updates = [];
   const params = [];
 
+  if (parsed.novoNome) {
+    const novoNome = formatarNomeCartao(parsed.novoNome);
+    const existente = await obterCartaoPorNomeExato(userId, novoNome);
+    if (existente && Number(existente.id) !== Number(cartao.id)) {
+      return `Ja existe um cartao chamado "${existente.nome}". Use "cartoes" para ver os IDs e evitar confusao.`;
+    }
+
+    updates.push('nome = ?');
+    params.push(novoNome);
+  }
+
   if (parsed.limite !== null && parsed.limite !== undefined) {
     updates.push('limite = ?');
     params.push(parsed.limite);
@@ -295,6 +308,7 @@ async function cadastrarParcelamento(userId, parsed) {
   let cartaoId = null;
   if (parsed.formaPagamento === 'credito') {
     const cartao = await obterCartaoParaLancamento(userId, parsed.cartao);
+    if (!cartao) return respostaCartaoNaoEncontrado(userId, parsed.cartao);
     cartaoId = cartao ? cartao.id : null;
   }
 
@@ -430,6 +444,54 @@ async function responderFatura(userId, nomeCartao, periodo) {
 ${texto}
 
 📌 Total: ${formatarMoeda(total)}`;
+}
+
+async function responderDetalheFatura(userId, nomeCartao, periodo) {
+  const intervalo = resolverIntervalo(periodo);
+  const cartoes = await all(getDb(), 'SELECT * FROM cartoes_credito WHERE usuario_id = ? AND ativo = 1 ORDER BY nome', [userId]);
+  const cartoesFiltrados = filtrarCartoesPorNome(cartoes, nomeCartao);
+
+  if (cartoes.length === 0) {
+    return 'Nenhum cartao cadastrado ainda. Exemplo: "cadastrar cartao Nubank limite 4000 vencimento 10"';
+  }
+
+  if (nomeCartao && cartoesFiltrados.length === 0) {
+    return `Nao encontrei o cartao "${nomeCartao}". Envie "cartoes" para ver os nomes e IDs.`;
+  }
+
+  const lancamentos = await listarLancamentos(userId, intervalo, { tipo: 'cartao' });
+  const ids = new Set(cartoesFiltrados.map(c => Number(c.id)));
+  const filtrados = lancamentos.filter(l => ids.has(Number(l.cartao_id || 0)));
+
+  if (filtrados.length === 0) {
+    const alvo = nomeCartao ? ` do cartao ${formatarNomeCartao(nomeCartao)}` : '';
+    return `Nenhuma compra${alvo} encontrada em ${intervalo.rotulo}.`;
+  }
+
+  const grupos = cartoesFiltrados
+    .map(cartao => ({
+      cartao,
+      itens: filtrados.filter(l => Number(l.cartao_id || 0) === Number(cartao.id))
+    }))
+    .filter(g => g.itens.length > 0);
+
+  const blocos = grupos.map(g => {
+    const total = g.itens.reduce((sum, l) => sum + Number(l.valor || 0), 0);
+    const linhas = g.itens.slice(0, 12).map(l => {
+      return `#${l.id} ${formatarDataBR(l.data_lancamento)} | ${formatarMoeda(l.valor)} | ${l.categoria} | ${l.descricao}`;
+    }).join('\n');
+
+    return `*#${g.cartao.id} - ${g.cartao.nome}*\nTotal: ${formatarMoeda(total)}\n${linhas}`;
+  }).join('\n\n');
+
+  const totalGeral = filtrados.reduce((sum, l) => sum + Number(l.valor || 0), 0);
+  const avisoLimite = filtrados.length > 12 ? '\n\nMostrei os lancamentos mais recentes. Use "extrato" para ver mais detalhes gerais.' : '';
+
+  return `*Detalhe da fatura - ${intervalo.rotulo}*
+
+${blocos}
+
+*Total geral:* ${formatarMoeda(totalGeral)}${avisoLimite}`;
 }
 
 async function corrigirLancamento(userId, parsed) {
@@ -587,27 +649,40 @@ function valorRestanteParcelamento(parcelamento) {
 }
 
 async function obterCartaoParaLancamento(userId, nomeCartao) {
+  const cartoes = await all(getDb(), 'SELECT * FROM cartoes_credito WHERE usuario_id = ? AND ativo = 1 ORDER BY nome', [userId]);
+
   if (nomeCartao) {
-    const existente = await get(getDb(), `
-      SELECT * FROM cartoes_credito
-      WHERE usuario_id = ? AND lower(nome) LIKE ? AND ativo = 1
-      ORDER BY nome
-      LIMIT 1
-    `, [userId, `%${nomeCartao.toLowerCase()}%`]);
-
-    if (existente) return existente;
-
-    const nome = formatarNomeCartao(nomeCartao);
-    const criado = await run(getDb(), `
-      INSERT OR IGNORE INTO cartoes_credito (usuario_id, nome, limite)
-      VALUES (?, ?, 0)
-    `, [userId, nome]);
-
-    if (criado.lastID) return getCartaoPorId(userId, criado.lastID);
+    const encontrados = filtrarCartoesPorNome(cartoes, nomeCartao);
+    return encontrados.length === 1 ? encontrados[0] : null;
   }
 
-  const cartoes = await all(getDb(), 'SELECT * FROM cartoes_credito WHERE usuario_id = ? AND ativo = 1 ORDER BY nome', [userId]);
   return cartoes.length === 1 ? cartoes[0] : null;
+}
+
+async function respostaCartaoNaoEncontrado(userId, nomeCartao) {
+  const cartoes = await all(getDb(), 'SELECT * FROM cartoes_credito WHERE usuario_id = ? AND ativo = 1 ORDER BY nome', [userId]);
+  if (cartoes.length === 0) {
+    return 'Antes de lancar no credito, cadastre um cartao. Exemplo: "cadastrar cartao Inter limite 2000 vencimento 10".';
+  }
+
+  const lista = cartoes.slice(0, 8).map(c => `#${c.id} - ${c.nome}`).join('\n');
+  if (nomeCartao) {
+    return `Nao encontrei o cartao "${formatarNomeCartao(nomeCartao)}".\n\nUse um destes nomes:\n${lista}\n\nExemplo: "compra de 300 no cartao ${cartoes[0].nome} com comida".`;
+  }
+
+  return `Em qual cartao foi essa compra?\n\n${lista}\n\nExemplo: "compra de 300 no cartao ${cartoes[0].nome} com comida".`;
+}
+
+function filtrarCartoesPorNome(cartoes, nomeCartao) {
+  if (!nomeCartao) return cartoes;
+  const alvo = normalizarTexto(nomeCartao);
+  const exatos = cartoes.filter(c => normalizarTexto(c.nome) === alvo);
+  if (exatos.length > 0) return exatos;
+
+  return cartoes.filter(c => {
+    const nome = normalizarTexto(c.nome);
+    return nome.includes(alvo) || alvo.includes(nome);
+  });
 }
 
 async function getCartaoPorId(userId, cartaoId) {
@@ -794,6 +869,15 @@ function formatarNomeCartao(nome) {
     .trim()
     .replace(/\s+/g, ' ')
     .replace(/\b\w/g, letra => letra.toUpperCase());
+}
+
+function normalizarTexto(texto) {
+  return String(texto || '')
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/\s+/g, ' ')
+    .trim();
 }
 
 function nomeTipo(tipo) {

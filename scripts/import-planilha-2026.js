@@ -4,21 +4,7 @@ const path = require('path');
 const XLSX = require('xlsx');
 const { createClient } = require('@supabase/supabase-js');
 
-const MESES = [
-  'Janeiro',
-  'Fevereiro',
-  'Março',
-  'Abril',
-  'Maio',
-  'Junho',
-  'Julho',
-  'Agosto',
-  'Setembro',
-  'Outubro',
-  'Novembro',
-  'Dezembro'
-];
-
+const MESES = ['Janeiro', 'Fevereiro', 'Marco', 'Abril', 'Maio', 'Junho', 'Julho', 'Agosto', 'Setembro', 'Outubro', 'Novembro', 'Dezembro'];
 const MES_NUMERO = Object.fromEntries(MESES.map((mes, index) => [mes, index + 1]));
 const PLANILHA_PADRAO = 'C:/Users/walla/Downloads/Planilha_Financeira_2026.xlsx';
 
@@ -42,11 +28,7 @@ function valorMoeda(valor) {
 
   let texto = String(valor).trim();
   const negativo = texto.includes('-');
-  texto = texto
-    .replace(/R\$/g, '')
-    .replace(/\s/g, '')
-    .replace(/[^0-9,.-]/g, '');
-
+  texto = texto.replace(/R\$/g, '').replace(/\s/g, '').replace(/[^0-9,.-]/g, '');
   if (!texto) return 0;
   if (texto.includes(',') && texto.includes('.')) texto = texto.replace(/,/g, '');
   else if (texto.includes(',')) texto = texto.replace(',', '.');
@@ -73,6 +55,15 @@ function dataISO(valor, mesNumero) {
   return `2026-${String(mesNumero).padStart(2, '0')}-01`;
 }
 
+function dataISOMesPlanilha(valor, mesNumero) {
+  const texto = String(valor || '').trim();
+  const match = texto.match(/^(\d{1,2})(?:[\/.-]\d{1,2})?(?:[\/.-](\d{2,4}))?$/);
+  if (!match) return `2026-${String(mesNumero).padStart(2, '0')}-01`;
+
+  const ano = match[2] ? normalizarAno(match[2]) : 2026;
+  return `${ano}-${String(mesNumero).padStart(2, '0')}-${String(Number(match[1])).padStart(2, '0')}`;
+}
+
 function normalizarAno(ano) {
   const valor = Number(ano);
   return valor < 100 ? 2000 + valor : valor;
@@ -92,16 +83,13 @@ function tipoLancamento(forma) {
 }
 
 function nomeCartao(valor) {
-  const texto = String(valor || '').trim();
-  const match = texto.match(/cr[eé]dito\s+(.+)/i);
+  const texto = normalizar(valor);
+  const match = texto.match(/credito\s+(.+)/i);
   return match ? formatarNome(match[1]) : null;
 }
 
 function formatarNome(valor) {
-  return String(valor || '')
-    .trim()
-    .replace(/\s+/g, ' ')
-    .replace(/\b\w/g, letra => letra.toUpperCase());
+  return String(valor || '').trim().replace(/\s+/g, ' ').replace(/\b\w/g, letra => letra.toUpperCase());
 }
 
 function categoriaBot(categoria) {
@@ -115,6 +103,10 @@ function categoriaBot(categoria) {
   if (texto.includes('lazer')) return 'lazer';
   if (texto.includes('salario') || texto.includes('receita')) return 'receita';
   return texto || 'outros';
+}
+
+function getSheetMes(workbook, mes) {
+  return workbook.SheetNames.find(nome => normalizar(nome) === normalizar(mes));
 }
 
 function encontrarGruposLancamento(header) {
@@ -133,9 +125,7 @@ function encontrarGruposLancamento(header) {
       if (nome === 'valor') grupo.valor = k;
     }
 
-    if (grupo.data !== null && grupo.tipo !== null && grupo.categoria !== null && grupo.valor !== null) {
-      grupos.push(grupo);
-    }
+    if (grupo.data !== null && grupo.tipo !== null && grupo.categoria !== null && grupo.valor !== null) grupos.push(grupo);
   }
 
   return grupos;
@@ -146,11 +136,74 @@ function linhaVazia(row, grupo) {
     .every(coluna => row[coluna] === null || row[coluna] === undefined || String(row[coluna]).trim() === '');
 }
 
-function extrairLancamentosMensais(workbook) {
+function extrairInfoParcelamento(descricao) {
+  const match = String(descricao || '').match(/\b(\d{1,2})\/(\d{1,2})\b/);
+  if (!match) return null;
+
+  const atual = Number(match[1]);
+  const total = Number(match[2]);
+  if (!atual || !total || atual > total) return null;
+  return { atual, total };
+}
+
+function adicionarMeses(dataISOValor, meses) {
+  const [ano, mes, dia] = String(dataISOValor).slice(0, 10).split('-').map(Number);
+  const data = new Date(ano, mes - 1 + meses, 1);
+  const ultimoDia = new Date(data.getFullYear(), data.getMonth() + 1, 0).getDate();
+  data.setDate(Math.min(dia || 1, ultimoDia));
+  return [
+    data.getFullYear(),
+    String(data.getMonth() + 1).padStart(2, '0'),
+    String(data.getDate()).padStart(2, '0')
+  ].join('-');
+}
+
+function classificarParcelamento(descricao, categoria) {
+  const texto = `${normalizar(descricao)} ${normalizar(categoria)}`;
+  return texto.includes('emprestimo') || texto.includes('acordo') || texto.includes('parc. fatura') || texto.includes('fatura')
+    ? 'divida'
+    : 'compra';
+}
+
+function criarParcelamento({ mes, linhaIndex, linha, grupo, mesNumero }) {
+  const descricao = String(linha[grupo.nome] || '').trim();
+  const info = extrairInfoParcelamento(descricao);
+  if (!info) return null;
+
+  const valor = Math.abs(valorMoeda(linha[grupo.valor]));
+  if (!valor) return null;
+
+  const pago = grupo.pago === null ? true : String(linha[grupo.pago]).toUpperCase() === 'TRUE';
+  const dataAtual = dataISOMesPlanilha(linha[grupo.data], mesNumero);
+  const dataInicio = adicionarMeses(dataAtual, -(info.atual - 1));
+  const dataFim = adicionarMeses(dataInicio, info.total - 1);
+  const forma = formaPagamento(linha[grupo.tipo]);
+  const parcelasPagas = Math.max(0, Math.min(info.total, pago ? info.atual : info.atual - 1));
+
+  return {
+    mes,
+    linha: linhaIndex + 1,
+    tipo: classificarParcelamento(descricao, linha[grupo.categoria]),
+    descricao,
+    valor_parcela: valor,
+    total_parcelas: info.total,
+    parcelas_pagas: parcelasPagas,
+    forma_pagamento: forma,
+    cartao: nomeCartao(linha[grupo.tipo]),
+    categoria: categoriaBot(linha[grupo.categoria]),
+    data_inicio: dataInicio,
+    data_fim: dataFim,
+    status: parcelasPagas >= info.total ? 'quitado' : 'ativo'
+  };
+}
+
+function extrairDadosMensais(workbook) {
   const lancamentos = [];
+  const parcelamentos = [];
 
   for (const mes of MESES) {
-    const sheet = workbook.Sheets[mes];
+    const sheetName = getSheetMes(workbook, mes);
+    const sheet = workbook.Sheets[sheetName];
     if (!sheet) continue;
 
     const linhas = XLSX.utils.sheet_to_json(sheet, { header: 1, defval: null, raw: false });
@@ -174,6 +227,9 @@ function extrairLancamentosMensais(workbook) {
           const valor = Math.abs(valorMoeda(linha[grupo.valor]));
           if (!descricao || !valor) continue;
 
+          const parcelamento = criarParcelamento({ mes, linhaIndex, linha, grupo, mesNumero });
+          if (parcelamento && parcelamento.status === 'ativo') parcelamentos.push(parcelamento);
+
           const pago = grupo.pago === null ? true : String(linha[grupo.pago]).toUpperCase() === 'TRUE';
           if (!pago && !incluirNaoPagos) continue;
 
@@ -187,7 +243,7 @@ function extrairLancamentosMensais(workbook) {
             descricao,
             forma_pagamento: forma,
             cartao: nomeCartao(linha[grupo.tipo]),
-            data_lancamento: dataISO(linha[grupo.data], mesNumero),
+            data_lancamento: dataISOMesPlanilha(linha[grupo.data], mesNumero),
             origem: pago ? 'planilha' : 'planilha-nao-pago'
           });
         }
@@ -221,7 +277,30 @@ function extrairLancamentosMensais(workbook) {
     }
   }
 
-  return lancamentos;
+  return { lancamentos, parcelamentos: consolidarParcelamentos(parcelamentos) };
+}
+
+function consolidarParcelamentos(parcelamentos) {
+  const porChave = new Map();
+
+  for (const item of parcelamentos) {
+    const chave = [
+      normalizar(item.descricao).replace(/\b\d{1,2}\/(\d{1,2})\b/g, 'x/$1'),
+      Number(item.valor_parcela || 0).toFixed(2),
+      item.total_parcelas,
+      item.cartao || ''
+    ].join('|');
+    const existente = porChave.get(chave);
+
+    if (!existente || Number(item.parcelas_pagas || 0) > Number(existente.parcelas_pagas || 0)) {
+      porChave.set(chave, {
+        ...item,
+        descricao: item.descricao.replace(/\b\d{1,2}\/\d{1,2}\b/g, '').replace(/\s+/g, ' ').trim()
+      });
+    }
+  }
+
+  return [...porChave.values()].filter(item => item.status === 'ativo');
 }
 
 function resumir(lancamentos) {
@@ -244,45 +323,66 @@ function resumir(lancamentos) {
   }));
 }
 
+function resumirParcelamentos(parcelamentos) {
+  const resumo = {};
+  for (const item of parcelamentos) {
+    resumo[item.mes] ||= { qtd: 0, compras: 0, dividas: 0, restante: 0 };
+    resumo[item.mes].qtd += 1;
+    if (item.tipo === 'divida') resumo[item.mes].dividas += 1;
+    else resumo[item.mes].compras += 1;
+    resumo[item.mes].restante += item.valor_parcela * Math.max(0, item.total_parcelas - item.parcelas_pagas);
+  }
+  return Object.entries(resumo).map(([mes, valores]) => ({
+    mes,
+    qtd: valores.qtd,
+    compras: valores.compras,
+    dividas: valores.dividas,
+    restante: arredondar(valores.restante)
+  }));
+}
+
 function arredondar(valor) {
   return Math.round(valor * 100) / 100;
 }
 
 async function obterUsuario(client) {
-  const { data: existente, error: erroBusca } = await client
-    .from('usuarios')
-    .select('*')
-    .eq('whatsapp_id', whatsappId)
-    .maybeSingle();
+  const { data: existente, error: erroBusca } = await client.from('usuarios').select('*').eq('whatsapp_id', whatsappId).maybeSingle();
   if (erroBusca) throw erroBusca;
   if (existente) return existente;
 
-  const { data, error } = await client
-    .from('usuarios')
-    .insert({ whatsapp_id: whatsappId, nome: 'Wallace' })
-    .select('*')
-    .single();
+  const { data, error } = await client.from('usuarios').insert({ whatsapp_id: whatsappId, nome: 'Wallace' }).select('*').single();
   if (error) throw error;
   return data;
 }
 
-async function importarSupabase(lancamentos) {
+async function obterCartoes(client, usuarioId, lancamentos, parcelamentos) {
+  const cartoes = new Map();
+  const nomes = [...new Set([
+    ...lancamentos.map(l => l.cartao).filter(Boolean),
+    ...parcelamentos.map(p => p.cartao).filter(Boolean)
+  ])];
+
+  for (const nome of nomes) {
+    const { data, error } = await client
+      .from('cartoes_credito')
+      .upsert({ usuario_id: usuarioId, nome, limite: 0, ativo: true }, { onConflict: 'usuario_id,nome' })
+      .select('*')
+      .single();
+    if (error) throw error;
+    if (data) cartoes.set(nome, data.id);
+  }
+
+  return cartoes;
+}
+
+async function importarSupabase(lancamentos, parcelamentos) {
   if (!process.env.SUPABASE_URL || !process.env.SUPABASE_KEY) {
     throw new Error('Configure SUPABASE_URL e SUPABASE_KEY para importar.');
   }
 
   const client = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_KEY);
   const usuario = await obterUsuario(client);
-
-  const cartoes = new Map();
-  for (const nome of [...new Set(lancamentos.map(l => l.cartao).filter(Boolean))]) {
-    const { data } = await client
-      .from('cartoes_credito')
-      .upsert({ usuario_id: usuario.id, nome, limite: 0, ativo: true }, { onConflict: 'usuario_id,nome' })
-      .select('*')
-      .single();
-    if (data) cartoes.set(nome, data.id);
-  }
+  const cartoes = await obterCartoes(client, usuario.id, lancamentos, parcelamentos);
 
   const { data: existentes, error: erroExistentes } = await client
     .from('lancamentos')
@@ -304,11 +404,46 @@ async function importarSupabase(lancamentos) {
       cartao_id: l.cartao ? cartoes.get(l.cartao) || null : null
     }));
 
-  if (novos.length === 0) return { inseridos: 0, ignorados: lancamentos.length };
+  if (novos.length > 0) {
+    const { error } = await client.from('lancamentos').insert(novos);
+    if (error) throw error;
+  }
 
-  const { error } = await client.from('lancamentos').insert(novos);
-  if (error) throw error;
-  return { inseridos: novos.length, ignorados: lancamentos.length - novos.length };
+  const { data: existentesParcelamentos, error: erroParcelamentos } = await client
+    .from('parcelamentos')
+    .select('id,descricao,valor_parcela,total_parcelas,data_inicio')
+    .eq('usuario_id', usuario.id);
+  if (erroParcelamentos) throw erroParcelamentos;
+
+  const chavesParcelamentos = new Set((existentesParcelamentos || []).map(chaveParcelamento));
+  const novosParcelamentos = parcelamentos
+    .filter(p => !chavesParcelamentos.has(chaveParcelamento(p)))
+    .map(p => ({
+      usuario_id: usuario.id,
+      descricao: p.descricao,
+      tipo: p.tipo,
+      valor_parcela: p.valor_parcela,
+      total_parcelas: p.total_parcelas,
+      parcelas_pagas: p.parcelas_pagas,
+      forma_pagamento: p.forma_pagamento,
+      cartao_id: p.cartao ? cartoes.get(p.cartao) || null : null,
+      categoria: p.categoria,
+      data_inicio: p.data_inicio,
+      data_fim: p.data_fim,
+      status: p.status
+    }));
+
+  if (novosParcelamentos.length > 0) {
+    const { error } = await client.from('parcelamentos').insert(novosParcelamentos);
+    if (error) throw error;
+  }
+
+  return {
+    inseridos: novos.length,
+    ignorados: lancamentos.length - novos.length,
+    parcelamentosInseridos: novosParcelamentos.length,
+    parcelamentosIgnorados: parcelamentos.length - novosParcelamentos.length
+  };
 }
 
 function chaveLancamento(lancamento) {
@@ -321,27 +456,40 @@ function chaveLancamento(lancamento) {
   ].join('|');
 }
 
+function chaveParcelamento(parcelamento) {
+  return [
+    String(parcelamento.data_inicio).slice(0, 10),
+    Number(parcelamento.valor_parcela || 0).toFixed(2),
+    Number(parcelamento.total_parcelas || 0),
+    normalizar(parcelamento.descricao)
+  ].join('|');
+}
+
 async function main() {
   const caminho = path.resolve(arquivo);
   const workbook = XLSX.readFile(caminho);
-  const lancamentos = extrairLancamentosMensais(workbook);
+  const { lancamentos, parcelamentos } = extrairDadosMensais(workbook);
 
   console.log(`Arquivo: ${caminho}`);
   console.log(`Modo: ${aplicar ? 'IMPORTAR NO SUPABASE' : 'PREVIA, nada sera importado'}`);
-  console.log(`Nao pagos: ${incluirNaoPagos ? 'incluidos' : 'ignorados'}`);
+  console.log(`Lancamentos nao pagos: ${incluirNaoPagos ? 'incluidos' : 'ignorados'}`);
   console.log(`Total de lancamentos lidos: ${lancamentos.length}`);
   console.table(resumir(lancamentos));
-  console.log('Amostra:');
-  console.log(JSON.stringify(lancamentos.slice(0, 12), null, 2));
+  console.log('\nParcelamentos ativos encontrados:');
+  console.log(`Total de parcelamentos: ${parcelamentos.length}`);
+  console.table(resumirParcelamentos(parcelamentos));
+  console.log('Amostra de lancamentos:');
+  console.log(JSON.stringify(lancamentos.slice(0, 10), null, 2));
+  console.log('Amostra de parcelamentos:');
+  console.log(JSON.stringify(parcelamentos.slice(0, 10), null, 2));
 
   if (!aplicar) {
-    console.log('\nPara importar depois: node scripts/import-planilha-2026.js --apply');
-    console.log('Para incluir itens marcados como nao pagos: node scripts/import-planilha-2026.js --include-unpaid --apply');
+    console.log('\nPara importar: node scripts/import-planilha-2026.js --apply');
     return;
   }
 
-  const resultado = await importarSupabase(lancamentos);
-  console.log(`Importacao concluida. Inseridos: ${resultado.inseridos}. Ignorados como duplicados: ${resultado.ignorados}.`);
+  const resultado = await importarSupabase(lancamentos, parcelamentos);
+  console.log(`Importacao concluida. Lancamentos inseridos: ${resultado.inseridos}. Lancamentos duplicados: ${resultado.ignorados}. Parcelamentos inseridos: ${resultado.parcelamentosInseridos}. Parcelamentos duplicados: ${resultado.parcelamentosIgnorados}.`);
 }
 
 main().catch(error => {

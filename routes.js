@@ -42,6 +42,8 @@ Tente um destes exemplos:
   if (parsed.tipo === 'cadastrar_cartao') return cadastrarCartao(userId, parsed);
   if (parsed.tipo === 'editar_cartao') return editarCartao(userId, parsed);
   if (parsed.tipo === 'excluir_cartao') return excluirCartao(userId, parsed);
+  if (parsed.tipo === 'cadastrar_parcelamento') return cadastrarParcelamento(userId, parsed);
+  if (parsed.tipo === 'listar_parcelamentos') return responderParcelamentos(userId, parsed.filtro);
   if (parsed.tipo === 'corrigir') return corrigirLancamento(userId, parsed);
   if (parsed.tipo === 'excluir') return excluirLancamento(userId, parsed);
 
@@ -102,6 +104,13 @@ function getTextoAjuda() {
 "editar cartao Nubank limite 5000"
 "alterar vencimento do cartao Nubank para 15"
 "excluir cartao Nubank"
+
+*Parcelamentos e dividas*
+"comprei celular parcelado em 10x de 120 no credito Nubank"
+"cadastre divida emprestimo em 6 parcelas de 300"
+"parcelamentos"
+"compras parceladas"
+"dividas"
 
 *Consultas*
 "saldo atual"
@@ -239,6 +248,88 @@ async function excluirCartao(userId, parsed) {
 • Cartao: ${cartao.nome}
 • Historico: os lancamentos antigos continuam no extrato.`;
 }
+async function cadastrarParcelamento(userId, parsed) {
+  if (!parsed.valorParcela || !parsed.totalParcelas) {
+    return 'Nao entendi o parcelamento. Exemplo: "comprei celular parcelado em 10x de 120 no credito Nubank"';
+  }
+
+  let cartaoId = null;
+  if (parsed.formaPagamento === 'credito') {
+    const cartao = await obterCartaoParaLancamento(userId, parsed.cartao);
+    cartaoId = cartao ? cartao.id : null;
+  }
+
+  const parcelasPagas = Math.min(Number(parsed.parcelasPagas || 0), Number(parsed.totalParcelas));
+  const dataInicio = parsed.dataInicio || dataHojeISO();
+  const dataFim = adicionarMesesISO(dataInicio, Number(parsed.totalParcelas) - 1);
+  const status = parcelasPagas >= Number(parsed.totalParcelas) ? 'quitado' : 'ativo';
+
+  const resultado = await run(getDb(), `
+    INSERT INTO parcelamentos (
+      usuario_id, descricao, tipo, valor_parcela, total_parcelas, parcelas_pagas,
+      forma_pagamento, cartao_id, categoria, data_inicio, data_fim, status
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `, [
+    userId,
+    parsed.descricao,
+    parsed.tipoParcelamento || 'compra',
+    parsed.valorParcela,
+    parsed.totalParcelas,
+    parcelasPagas,
+    parsed.formaPagamento || 'nao_informado',
+    cartaoId,
+    parsed.categoria || 'outros',
+    dataInicio,
+    dataFim,
+    status
+  ]);
+
+  return `📌 *Parcelamento cadastrado*
+
+• ID: #${resultado.lastID}
+• Tipo: ${parsed.tipoParcelamento === 'divida' ? 'divida' : 'compra'}
+• Descricao: ${parsed.descricao}
+• Parcela: ${formatarMoeda(parsed.valorParcela)}
+• Progresso: ${parcelasPagas}/${parsed.totalParcelas}
+• Restante: ${formatarMoeda(parsed.valorParcela * (parsed.totalParcelas - parcelasPagas))}
+• Termina em: ${formatarDataBR(dataFim)}`;
+}
+
+async function responderParcelamentos(userId, filtro) {
+  const rows = await listarParcelamentos(userId, filtro);
+
+  if (rows.length === 0) {
+    if (filtro === 'divida') return 'Nenhuma divida parcelada ativa encontrada.';
+    if (filtro === 'compra') return 'Nenhuma compra parcelada ativa encontrada.';
+    return 'Nenhum parcelamento ativo encontrado.';
+  }
+
+  const totalRestante = rows.reduce((sum, p) => sum + valorRestanteParcelamento(p), 0);
+  const blocos = rows.slice(0, 12).map(p => {
+    const restantes = parcelasRestantes(p);
+    const cartao = p.cartao_nome ? `\n• Cartao: ${p.cartao_nome}` : '';
+    return `#${p.id} ${p.tipo === 'divida' ? 'Divida' : 'Compra'} - ${p.descricao}
+• Parcela: ${formatarMoeda(p.valor_parcela)}
+• Progresso: ${Number(p.parcelas_pagas || 0)}/${p.total_parcelas}
+• Faltam: ${restantes} parcela(s)
+• Restante: ${formatarMoeda(valorRestanteParcelamento(p))}
+• Termina em: ${formatarDataBR(p.data_fim)}${cartao}`;
+  }).join('\n\n');
+
+  const titulo = filtro === 'divida'
+    ? 'Dividas parceladas'
+    : filtro === 'compra'
+      ? 'Compras parceladas'
+      : 'Parcelamentos ativos';
+  return `📌 *${titulo}*
+
+${blocos}
+
+*Resumo*
+• Itens ativos: ${rows.length}
+• Total restante: ${formatarMoeda(totalRestante)}`;
+}
+
 async function responderCartoes(userId, periodo) {
   const intervalo = resolverIntervalo(periodo);
   const cartoesBase = await all(getDb(), 'SELECT * FROM cartoes_credito WHERE usuario_id = ? AND ativo = 1 ORDER BY nome', [userId]);
@@ -433,6 +524,29 @@ async function listarLancamentos(userId, intervalo, filtros = {}) {
   });
 }
 
+async function listarParcelamentos(userId, filtro) {
+  const rows = await all(getDb(), `
+    SELECT p.*, c.nome as cartao_nome
+    FROM parcelamentos p
+    LEFT JOIN cartoes_credito c ON c.id = p.cartao_id
+    WHERE p.usuario_id = ? AND p.status = 'ativo'
+    ORDER BY p.data_fim ASC, p.id ASC
+  `, [userId]);
+
+  return rows.filter(p => {
+    if (filtro && p.tipo !== filtro) return false;
+    return parcelasRestantes(p) > 0;
+  });
+}
+
+function parcelasRestantes(parcelamento) {
+  return Math.max(0, Number(parcelamento.total_parcelas || 0) - Number(parcelamento.parcelas_pagas || 0));
+}
+
+function valorRestanteParcelamento(parcelamento) {
+  return Number(parcelamento.valor_parcela || 0) * parcelasRestantes(parcelamento);
+}
+
 async function obterCartaoParaLancamento(userId, nomeCartao) {
   if (nomeCartao) {
     const existente = await get(getDb(), `
@@ -566,6 +680,19 @@ function fimDoDia(data) {
 
 function adicionarDias(data, dias) {
   return new Date(data.getFullYear(), data.getMonth(), data.getDate() + dias);
+}
+
+function adicionarMesesISO(dataISO, meses) {
+  const data = parseDataLocal(dataISO);
+  const dia = data.getDate();
+  const destino = new Date(data.getFullYear(), data.getMonth() + meses, 1);
+  const ultimoDia = new Date(destino.getFullYear(), destino.getMonth() + 1, 0).getDate();
+  destino.setDate(Math.min(dia, ultimoDia));
+  return [
+    destino.getFullYear(),
+    String(destino.getMonth() + 1).padStart(2, '0'),
+    String(destino.getDate()).padStart(2, '0')
+  ].join('-');
 }
 
 function inicioDaSemana(data) {

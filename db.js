@@ -107,6 +107,27 @@ async function initDB() {
     )
   `);
 
+  await runSqlite(db, `
+    CREATE TABLE IF NOT EXISTS parcelamentos (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      usuario_id INTEGER NOT NULL,
+      descricao TEXT NOT NULL,
+      tipo TEXT CHECK(tipo IN ('compra', 'divida')) DEFAULT 'compra',
+      valor_parcela DECIMAL(10,2) NOT NULL,
+      total_parcelas INTEGER NOT NULL,
+      parcelas_pagas INTEGER DEFAULT 0,
+      forma_pagamento TEXT,
+      cartao_id INTEGER,
+      categoria TEXT,
+      data_inicio DATE,
+      data_fim DATE,
+      status TEXT DEFAULT 'ativo',
+      criado_em DATETIME DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY (usuario_id) REFERENCES usuarios(id),
+      FOREIGN KEY (cartao_id) REFERENCES cartoes_credito(id)
+    )
+  `);
+
   await adicionarColunaSeNaoExistir(db, 'lancamentos', 'forma_pagamento', 'TEXT');
   await adicionarColunaSeNaoExistir(db, 'lancamentos', 'cartao_id', 'INTEGER');
   await adicionarColunaSeNaoExistir(db, 'lancamentos', 'corrigido_em', 'DATETIME');
@@ -170,6 +191,26 @@ async function runSupabase(db, sql, params = []) {
     return { lastID: data.id, changes: 1 };
   }
 
+  if (normalized.includes('insert into parcelamentos')) {
+    const payload = {
+      usuario_id: params[0],
+      descricao: params[1],
+      tipo: params[2],
+      valor_parcela: params[3],
+      total_parcelas: params[4],
+      parcelas_pagas: params[5],
+      forma_pagamento: params[6],
+      cartao_id: params[7],
+      categoria: params[8],
+      data_inicio: params[9],
+      data_fim: params[10],
+      status: params[11] || 'ativo'
+    };
+    const { data, error } = await client.from('parcelamentos').insert(payload).select('id').single();
+    if (error) throw error;
+    return { lastID: data.id, changes: 1 };
+  }
+
   if (normalized.includes('insert into cartoes_credito') && normalized.includes('on conflict')) {
     const payload = {
       usuario_id: params[0],
@@ -227,6 +268,18 @@ async function runSupabase(db, sql, params = []) {
     const id = params[index++];
     const usuarioId = params[index++];
     const { error, count } = await client.from('lancamentos').update(update).eq('id', id).eq('usuario_id', usuarioId);
+    if (error) throw error;
+    return { changes: count || 1 };
+  }
+
+  if (normalized.includes('update parcelamentos set')) {
+    const update = {};
+    let index = 0;
+    if (normalized.includes('parcelas_pagas = ?')) update.parcelas_pagas = params[index++];
+    if (normalized.includes('status = ?')) update.status = params[index++];
+    const id = params[index++];
+    const usuarioId = params[index++];
+    const { error, count } = await client.from('parcelamentos').update(update).eq('id', id).eq('usuario_id', usuarioId);
     if (error) throw error;
     return { changes: count || 1 };
   }
@@ -330,6 +383,18 @@ async function allSupabase(db, sql, params = []) {
     return data || [];
   }
 
+  if (normalized.includes('select p.*, c.nome as cartao_nome')) {
+    const { data, error } = await client
+      .from('parcelamentos')
+      .select('*, cartoes_credito(nome)')
+      .eq('usuario_id', params[0])
+      .eq('status', 'ativo')
+      .order('data_fim', { ascending: true })
+      .order('id', { ascending: true });
+    if (error) throw error;
+    return (data || []).map(mapParcelamentoComCartao);
+  }
+
   throw new Error(`Consulta Supabase nao suportada em all(): ${sql}`);
 }
 
@@ -398,6 +463,14 @@ function hojeISO() {
     String(hoje.getMonth() + 1).padStart(2, '0'),
     String(hoje.getDate()).padStart(2, '0')
   ].join('-');
+}
+
+function mapParcelamentoComCartao(row) {
+  if (!row) return row;
+  return {
+    ...row,
+    cartao_nome: row.cartoes_credito?.nome || null
+  };
 }
 
 function categoriasPadrao() {

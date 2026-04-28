@@ -138,6 +138,21 @@ function identificarConsulta(texto) {
 
   if (texto.includes('ajuda') || texto.includes('comandos')) return { tipo: 'ajuda' };
   if (
+    texto.includes('parcelamento') ||
+    texto.includes('parcelamentos') ||
+    texto.includes('parceladas') ||
+    texto.includes('parcelados') ||
+    texto.includes('dividas') ||
+    texto.includes('divida')
+  ) {
+    const filtro = texto.includes('divida') || texto.includes('dividas')
+      ? 'divida'
+      : texto.includes('compra') || texto.includes('compras')
+        ? 'compra'
+        : null;
+    return { tipo: 'listar_parcelamentos', filtro };
+  }
+  if (
     texto === 'cartao' ||
     texto === 'cartoes' ||
     texto.includes('meu cartao') ||
@@ -266,6 +281,60 @@ function parsearCadastroCartao(texto) {
   };
 }
 
+function parsearCadastroParcelamento(texto) {
+  const parcela = texto.match(/(?:parcelado\s+em\s+|em\s+)?(\d{1,2})x\b/) || texto.match(/\b(\d{1,2})\s+parcelas?\b/);
+  const composto = texto.match(/\b(\d{1,2})\/(\d{1,2})\b/);
+  const mencionaParcelado = parcela || composto || texto.includes('parcelado') || texto.includes('parcelamento') || texto.includes('divida');
+  const temAcao = /(cadastre|cadastrar|crie|criar|registre|registrar|tenho|fiz|comprei|peguei)/.test(texto);
+
+  if (!mencionaParcelado || !temAcao) return null;
+
+  const totalParcelas = parcela ? Number(parcela[1]) : Number(composto?.[2] || 0);
+  if (!totalParcelas) return null;
+
+  const parcelaAtual = composto ? Number(composto[1]) : 1;
+  const valorPorParcela = texto.match(/\b(?:de|por|parcela de|parcelas de)\s+(\d+[.,]?\d*)/);
+  const valorParcela = valorPorParcela
+    ? Number(valorPorParcela[1].replace(',', '.'))
+    : extrairNumeroDepoisDe(texto, 'parcela') || extrairNumeroDepoisDe(texto, 'parcelas') || extrairValor(texto);
+  const formaPagamento = identificarFormaPagamento(texto, null);
+  const cartao = formaPagamento === 'credito' ? extrairNomeCartao(texto) : null;
+  const tipoParcelamento = texto.includes('divida') || texto.includes('emprestimo') || texto.includes('acordo') ? 'divida' : 'compra';
+  const descricao = limparDescricaoParcelamento(texto, cartao);
+
+  return {
+    tipo: 'cadastrar_parcelamento',
+    tipoParcelamento,
+    descricao,
+    valorParcela,
+    totalParcelas,
+    parcelasPagas: Math.max(0, parcelaAtual - 1),
+    formaPagamento,
+    cartao,
+    categoria: identificarCategoria(texto),
+    dataInicio: extrairDataLancamento(texto)
+  };
+}
+
+function limparDescricaoParcelamento(texto, cartao) {
+  let descricao = texto
+    .replace(/\b(cadastre|cadastrar|crie|criar|registre|registrar|tenho|fiz|comprei|peguei)\b/g, '')
+    .replace(/\b(parcelamento|parcelado|parcelada|parceladas|parcelados|divida)\b/g, '')
+    .replace(/\b(em\s+)?\d{1,2}x\b/g, '')
+    .replace(/\b\d{1,2}\s+parcelas?\b/g, '')
+    .replace(/\b\d{1,2}\/\d{1,2}\b/g, '')
+    .replace(/\b(de|no valor de|valor|parcela|parcelas)\s+\d+[.,]?\d*/g, '')
+    .replace(/\d+[.,]?\d*/g, '')
+    .replace(/\b(no credito|no debito|no pix|em pix|dinheiro|cartao|credito|debito)\b/g, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+
+  if (cartao) descricao = descricao.replace(new RegExp(`\\b${cartao}\\b`, 'i'), '').trim();
+  descricao = descricao.replace(/^(em|de|do|da|no|na|com)\b\s*/g, '').trim();
+  descricao = descricao.replace(/\s+\b(em|de|do|da|no|na|com)$/g, '').trim();
+  return descricao || 'parcelamento';
+}
+
 function parsearEdicaoCartao(texto) {
   const mencionaCartao = /(cartao|credito)/.test(texto);
   const ehEdicao = /(editar|edite|alterar|altere|mudar|mude|ajustar|ajuste|corrigir|corrija|atualizar|atualize)/.test(texto);
@@ -361,6 +430,9 @@ function limparDescricao(texto) {
 
 function parsearMensagem(mensagem) {
   const texto = normalizar(mensagem);
+
+  const cadastroParcelamento = parsearCadastroParcelamento(texto);
+  if (cadastroParcelamento) return cadastroParcelamento;
 
   const edicaoCartao = parsearEdicaoCartao(texto);
   if (edicaoCartao) return edicaoCartao;

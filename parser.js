@@ -186,7 +186,7 @@ function identificarConsulta(texto) {
   }
   if (
     (texto.includes('fatura') || texto.includes('cartao')) &&
-    /(detalhe|detalhada|detalhes|transacao|transacoes|historico|movimentacao|movimentacoes)/.test(texto)
+    /(detalhe|detalhada|detalhes|transacao|transacoes|historico|movimentacao|movimentacoes|extrato)/.test(texto)
   ) {
     return { tipo: 'detalhe_fatura', cartao: extrairNomeCartao(texto), periodo };
   }

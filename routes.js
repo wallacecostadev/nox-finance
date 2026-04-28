@@ -101,6 +101,8 @@ function getTextoAjuda() {
 "gastei 120 no credito Nubank no mercado"
 "fatura"
 "fatura Nubank"
+"detalhe cartao Nubank"
+"extrato cartao Nubank"
 "cartoes"
 "editar cartao Nubank limite 5000"
 "alterar vencimento do cartao Nubank para 15"
@@ -443,7 +445,10 @@ async function responderFatura(userId, nomeCartao, periodo) {
 
 ${texto}
 
-📌 Total: ${formatarMoeda(total)}`;
+📌 Total: ${formatarMoeda(total)}
+
+Para ver as compras de um cartao, envie:
+"detalhe cartao Nubank"`;
 }
 
 async function responderDetalheFatura(userId, nomeCartao, periodo) {

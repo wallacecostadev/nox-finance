@@ -19,6 +19,8 @@ const ZAPI_CLIENT_TOKEN = process.env.ZAPI_CLIENT_TOKEN;
 const ZAPI_BASE_URL = `https://api.z-api.io/instances/${ZAPI_INSTANCE}/token/${ZAPI_TOKEN}`;
 const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
 const TRANSCRIPTION_MODEL = process.env.TRANSCRIPTION_MODEL || 'gpt-4o-mini-transcribe';
+const GROQ_API_KEY = process.env.GROQ_API_KEY;
+const GROQ_TRANSCRIPTION_MODEL = process.env.GROQ_TRANSCRIPTION_MODEL || 'whisper-large-v3-turbo';
 
 // Middleware
 app.use(express.json());
@@ -119,8 +121,10 @@ function extrairMensagemRecebida(body) {
 }
 
 async function transcreverAudio(audioUrl, mimeType = 'audio/ogg') {
-  if (!OPENAI_API_KEY) {
-    throw new Error('OPENAI_API_KEY precisa estar configurada para transcrever audio');
+  const provider = GROQ_API_KEY ? 'groq' : 'openai';
+
+  if (provider === 'openai' && !OPENAI_API_KEY) {
+    throw new Error('Configure GROQ_API_KEY ou OPENAI_API_KEY para transcrever audio');
   }
 
   const audioResponse = await axios.get(audioUrl, {
@@ -133,14 +137,20 @@ async function transcreverAudio(audioUrl, mimeType = 'audio/ogg') {
   const filename = getNomeArquivoAudio(mimeType);
 
   form.append('file', new Blob([audioBuffer], { type: mimeType }), filename);
-  form.append('model', TRANSCRIPTION_MODEL);
+  form.append('model', provider === 'groq' ? GROQ_TRANSCRIPTION_MODEL : TRANSCRIPTION_MODEL);
   form.append('language', 'pt');
   form.append('prompt', 'Transcreva comandos financeiros em portugues do Brasil, preservando valores, formas de pagamento, nomes de cartoes e categorias.');
 
-  const response = await fetch('https://api.openai.com/v1/audio/transcriptions', {
+  const endpoint = provider === 'groq'
+    ? 'https://api.groq.com/openai/v1/audio/transcriptions'
+    : 'https://api.openai.com/v1/audio/transcriptions';
+
+  const apiKey = provider === 'groq' ? GROQ_API_KEY : OPENAI_API_KEY;
+
+  const response = await fetch(endpoint, {
     method: 'POST',
     headers: {
-      Authorization: `Bearer ${OPENAI_API_KEY}`
+      Authorization: `Bearer ${apiKey}`
     },
     body: form
   });
@@ -148,7 +158,7 @@ async function transcreverAudio(audioUrl, mimeType = 'audio/ogg') {
   const data = await response.json();
 
   if (!response.ok) {
-    throw new Error(`Erro ao transcrever audio: ${data.error?.message || response.statusText}`);
+    throw new Error(`Erro ao transcrever audio com ${provider}: ${data.error?.message || response.statusText}`);
   }
 
   return String(data.text || '').trim();

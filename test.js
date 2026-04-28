@@ -9,7 +9,16 @@ console.log('=== NOX FINANCE - Testes ===\n');
 
 const testes = [
   'recebi 5000 do salario',
-  'gastei 150 no mercado',
+  'gastei 150 no mercado no pix',
+  'gastei 80 no mercado no debito',
+  'comprei 35 no dinheiro',
+  'cadastrar cartao Nubank limite 4000 vencimento 10',
+  'gastei 120 no credito Nubank no mercado',
+  'fatura Nubank',
+  'cartoes',
+  'corrigir ultimo valor 95',
+  'corrigir 12 pix',
+  'apagar ultimo',
   'paguei 200 de luz',
   'cartao de 300 na ifood',
   'saldo atual',

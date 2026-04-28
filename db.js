@@ -77,6 +77,25 @@ async function initDB() {
   `);
 
   await run(db, `
+    CREATE TABLE IF NOT EXISTS cartoes_credito (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      usuario_id INTEGER NOT NULL,
+      nome TEXT NOT NULL,
+      limite DECIMAL(10,2) DEFAULT 0,
+      dia_vencimento INTEGER,
+      dia_fechamento INTEGER,
+      ativo INTEGER DEFAULT 1,
+      criado_em DATETIME DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY (usuario_id) REFERENCES usuarios(id),
+      UNIQUE(usuario_id, nome)
+    )
+  `);
+
+  await adicionarColunaSeNaoExistir(db, 'lancamentos', 'forma_pagamento', 'TEXT');
+  await adicionarColunaSeNaoExistir(db, 'lancamentos', 'cartao_id', 'INTEGER');
+  await adicionarColunaSeNaoExistir(db, 'lancamentos', 'corrigido_em', 'DATETIME');
+
+  await run(db, `
     CREATE TABLE IF NOT EXISTS metas (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       usuario_id INTEGER NOT NULL,
@@ -102,6 +121,14 @@ async function initDB() {
   }
 
   return db;
+}
+
+async function adicionarColunaSeNaoExistir(db, tabela, coluna, definicao) {
+  const colunas = await all(db, `PRAGMA table_info(${tabela})`);
+  const existe = colunas.some(c => c.name === coluna);
+  if (!existe) {
+    await run(db, `ALTER TABLE ${tabela} ADD COLUMN ${coluna} ${definicao}`);
+  }
 }
 
 module.exports = { initDB, run, get, all };

@@ -229,7 +229,7 @@ async function cadastrarCartao(userId, parsed) {
 
 async function editarCartao(userId, parsed) {
   if (!parsed.id && !parsed.nome) {
-    return 'Qual cartão você quer editar? Exemplo: "editar cartão #5 limite 5000" ou "editar cartão Nubank limite 5000".';
+    return 'Qual cartão você quer editar? Exemplo: "editar cartão n5 limite 5000" ou "editar cartão Nubank limite 5000".';
   }
 
   const cartao = await obterCartaoAlvo(userId, parsed);
@@ -267,7 +267,7 @@ async function editarCartao(userId, parsed) {
   }
 
   if (updates.length === 0) {
-    return 'Diga o que quer editar. Exemplo: "editar cartão #5 limite 5000 vencimento 15".';
+    return 'Diga o que quer editar. Exemplo: "editar cartão n5 limite 5000 vencimento 15".';
   }
 
   params.push(cartao.id, userId);
@@ -276,7 +276,7 @@ async function editarCartao(userId, parsed) {
   const atualizado = await getCartaoPorId(userId, cartao.id);
   return `💳 *Cartão atualizado*
 
-• ID: #${atualizado.id}
+• Nº: ${formatarIdCartao(atualizado.id)}
 • Cartão: ${atualizado.nome}
 • Limite: ${formatarMoeda(atualizado.limite || 0)}
 • Vencimento: dia ${atualizado.dia_vencimento || 'não informado'}
@@ -285,7 +285,7 @@ async function editarCartao(userId, parsed) {
 
 async function excluirCartao(userId, parsed) {
   if (!parsed.id && !parsed.nome) {
-    return 'Qual cartão você quer excluir? Exemplo: "excluir cartão #5" ou "excluir cartão Nubank". Use "cartões" para ver os IDs.';
+    return 'Qual cartão você quer excluir? Exemplo: "excluir cartão n5" ou "excluir cartão Nubank". Use "cartões" para ver os números.';
   }
 
   const cartao = await obterCartaoAlvo(userId, parsed);
@@ -296,7 +296,7 @@ async function excluirCartao(userId, parsed) {
   await run(getDb(), 'UPDATE cartoes_credito SET ativo = 0 WHERE id = ? AND usuario_id = ?', [cartao.id, userId]);
   return `🗑️ *Cartão removido*
 
-• ID: #${cartao.id}
+• Nº: ${formatarIdCartao(cartao.id)}
 • Cartão: ${cartao.nome}
 • Histórico: os lançamentos antigos continuam no extrato.`;
 }
@@ -406,10 +406,10 @@ async function responderCartoes(userId, periodo) {
     const disponivel = limite - fatura;
     const uso = limite > 0 ? Math.round((fatura / limite) * 100) : 0;
 
-    return `💳 *#${c.id} - ${c.nome}*\n• Fatura: ${formatarMoeda(fatura)}\n• Limite: ${formatarMoeda(limite)}\n• Disponível: ${formatarMoeda(disponivel)}\n• Uso: ${uso}%\n• Vencimento: dia ${c.dia_vencimento || '-'}\n• Fechamento: dia ${c.dia_fechamento || '-'}`;
+    return `💳 *${formatarIdCartao(c.id)} - ${c.nome}*\n• Fatura: ${formatarMoeda(fatura)}\n• Limite: ${formatarMoeda(limite)}\n• Disponível: ${formatarMoeda(disponivel)}\n• Uso: ${uso}%\n• Vencimento: dia ${c.dia_vencimento || '-'}\n• Fechamento: dia ${c.dia_fechamento || '-'}`;
   }).join('\n\n');
 
-  return `💳 *Meus cartões - ${intervalo.rotulo}*\n\n${blocos}\n\n📌 *Resumo*\n• Fatura total: ${formatarMoeda(totalFatura)}\n• Limite total: ${formatarMoeda(totalLimite)}\n• Disponível total: ${formatarMoeda(totalLimite - totalFatura)}\n\nPara apagar: "excluir cartão #ID"\nPara editar: "editar cartão #ID limite 3000"`;
+  return `💳 *Meus cartões - ${intervalo.rotulo}*\n\n${blocos}\n\n📌 *Resumo*\n• Fatura total: ${formatarMoeda(totalFatura)}\n• Limite total: ${formatarMoeda(totalLimite)}\n• Disponível total: ${formatarMoeda(totalLimite - totalFatura)}\n\nPara apagar: "excluir cartão n1"\nPara editar: "editar cartão n1 limite 3000"\nPor áudio, também pode falar: "cartão número 1".`;
 }
 
 async function responderFatura(userId, nomeCartao, periodo) {
@@ -481,7 +481,7 @@ async function responderDetalheFatura(userId, nomeCartao, periodo) {
       return `#${l.id} ${formatarDataBR(l.data_lancamento)} | ${formatarMoeda(l.valor)} | ${l.categoria} | ${l.descricao}`;
     }).join('\n');
 
-    return `*#${g.cartao.id} - ${g.cartao.nome}*\nTotal: ${formatarMoeda(total)}\n${linhas}`;
+    return `*${formatarIdCartao(g.cartao.id)} - ${g.cartao.nome}*\nTotal: ${formatarMoeda(total)}\n${linhas}`;
   }).join('\n\n');
 
   const totalGeral = filtrados.reduce((sum, l) => sum + Number(l.valor || 0), 0);
@@ -665,7 +665,7 @@ async function respostaCartaoNaoEncontrado(userId, nomeCartao) {
     return 'Antes de lancar no credito, cadastre um cartao. Exemplo: "cadastrar cartao Inter limite 2000 vencimento 10".';
   }
 
-  const lista = cartoes.slice(0, 8).map(c => `#${c.id} - ${c.nome}`).join('\n');
+  const lista = cartoes.slice(0, 8).map(c => `${formatarIdCartao(c.id)} - ${c.nome}`).join('\n');
   if (nomeCartao) {
     return `Nao encontrei o cartao "${formatarNomeCartao(nomeCartao)}".\n\nUse um destes nomes:\n${lista}\n\nExemplo: "compra de 300 no cartao ${cartoes[0].nome} com comida".`;
   }
@@ -878,6 +878,10 @@ function normalizarTexto(texto) {
     .replace(/[\u0300-\u036f]/g, '')
     .replace(/\s+/g, ' ')
     .trim();
+}
+
+function formatarIdCartao(id) {
+  return `n${id}`;
 }
 
 function nomeTipo(tipo) {

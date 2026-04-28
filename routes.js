@@ -169,6 +169,43 @@ async function registrarLancamento(userId, parsed) {
 
 async function cadastrarCartao(userId, parsed) {
   const nome = formatarNomeCartao(parsed.nome);
+  if (!nome || nome.toLowerCase() === 'cartao') {
+    return 'Qual o nome do cartao? Exemplo: "cartao Inter limite 2000 vencimento 10"';
+  }
+
+  const existente = await obterCartaoPorNomeExato(userId, nome);
+  if (existente) {
+    const updates = [];
+    const params = [];
+
+    if (parsed.limite !== null && parsed.limite !== undefined) {
+      updates.push('limite = ?');
+      params.push(parsed.limite);
+    }
+
+    if (parsed.vencimento !== null && parsed.vencimento !== undefined) {
+      updates.push('dia_vencimento = ?');
+      params.push(parsed.vencimento);
+    }
+
+    if (parsed.fechamento !== null && parsed.fechamento !== undefined) {
+      updates.push('dia_fechamento = ?');
+      params.push(parsed.fechamento);
+    }
+
+    if (updates.length > 0) {
+      params.push(existente.id, userId);
+      await run(getDb(), `UPDATE cartoes_credito SET ${updates.join(', ')}, ativo = 1 WHERE id = ? AND usuario_id = ?`, params);
+    }
+
+    const atualizado = await getCartaoPorId(userId, existente.id);
+    return `💳 *Cartao atualizado*
+
+• Cartao: ${atualizado.nome}
+• Limite: ${formatarMoeda(atualizado.limite || 0)}
+• Vencimento: dia ${atualizado.dia_vencimento || 'nao informado'}
+• Fechamento: dia ${atualizado.dia_fechamento || 'nao informado'}`;
+  }
 
   await run(getDb(), `
     INSERT INTO cartoes_credito (usuario_id, nome, limite, dia_vencimento, dia_fechamento)
@@ -178,12 +215,12 @@ async function cadastrarCartao(userId, parsed) {
       dia_vencimento = excluded.dia_vencimento,
       dia_fechamento = excluded.dia_fechamento,
       ativo = 1
-  `, [userId, nome, parsed.limite || 0, parsed.vencimento || null, parsed.fechamento || null]);
+  `, [userId, nome, parsed.limite ?? 0, parsed.vencimento || null, parsed.fechamento || null]);
 
   return `💳 *Cartao cadastrado*
 
 • Cartao: ${nome}
-• Limite: ${formatarMoeda(parsed.limite || 0)}
+• Limite: ${formatarMoeda(parsed.limite ?? 0)}
 • Vencimento: dia ${parsed.vencimento || 'nao informado'}
 • Fechamento: dia ${parsed.fechamento || 'nao informado'}`;
 }
@@ -582,6 +619,11 @@ async function obterCartaoPorNome(userId, nomeCartao) {
     ORDER BY nome
     LIMIT 1
   `, [userId, `%${String(nomeCartao).toLowerCase()}%`]);
+}
+
+async function obterCartaoPorNomeExato(userId, nomeCartao) {
+  const cartoes = await all(getDb(), 'SELECT * FROM cartoes_credito WHERE usuario_id = ? ORDER BY nome', [userId]);
+  return cartoes.find(c => String(c.nome || '').toLowerCase() === String(nomeCartao || '').toLowerCase()) || null;
 }
 
 async function obterLancamentoAlvo(userId, parsed) {

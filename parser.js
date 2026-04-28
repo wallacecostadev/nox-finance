@@ -263,19 +263,24 @@ function parsearCadastroCartao(texto) {
   const temAcaoCadastro = /(cadastrar|cadastre|cadastrei|cadastra|cadastrado|criar|crie|criei|adicionar|adicione|adicionei|add|tenho|meu|minha).*(cartao|credito)/.test(texto);
   const temDadosDeCartao = mencionaCartao && /(limite|vencimento|vence|fechamento|fecha)/.test(texto);
   const pareceGasto = PALAVRAS_DESPESA.some(p => texto.includes(p));
-  const ehCadastro = temAcaoCadastro || (temDadosDeCartao && !pareceGasto);
+  const cadastroCurto = texto.match(/^(?:meu|minha)?\s*(?:cartao|credito)\s+(?!de\s*\d)([a-z0-9 ]+)$/);
+  const ehCadastro = temAcaoCadastro || cadastroCurto || (temDadosDeCartao && !pareceGasto);
   if (!ehCadastro) return null;
 
   const limite = extrairNumeroDepoisDe(texto, 'limite') || extrairValor(texto);
   const vencimento = extrairNumeroDepoisDe(texto, 'vencimento') || extrairNumeroDepoisDe(texto, 'vence');
   const fechamento = extrairNumeroDepoisDe(texto, 'fechamento') || extrairNumeroDepoisDe(texto, 'fecha');
   const nomeMatch = texto.match(/(?:cartao|credito)\s+(?:um|uma|o|a|meu|minha|do|da|de)?\s*([a-z0-9 ]+?)(?:\s+com|\s+limite|\s+vencimento|\s+vence|\s+fechamento|\s+fecha|$)/);
-  const nome = nomeMatch ? limparNomeCartaoCadastro(nomeMatch[1]) : null;
+  const nome = cadastroCurto && !temDadosDeCartao
+    ? limparNomeCartaoCadastro(cadastroCurto[1])
+    : nomeMatch
+      ? limparNomeCartaoCadastro(nomeMatch[1])
+      : null;
 
   return {
     tipo: 'cadastrar_cartao',
     nome: nome || 'cartao',
-    limite: limite || 0,
+    limite,
     vencimento,
     fechamento
   };

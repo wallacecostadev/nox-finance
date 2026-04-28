@@ -75,6 +75,10 @@ function extrairValor(texto) {
   return null;
 }
 
+function extrairValores(texto) {
+  return [...texto.matchAll(/\b(\d+[.,]?\d*)\b/g)].map(match => Number(match[1].replace(',', '.')));
+}
+
 function extrairNumeroDepoisDe(texto, palavra) {
   const match = texto.match(new RegExp(`${palavra}\\s+(?:de\\s+|dia\\s+)?(\\d+[.,]?\\d*)`));
   return match ? Number(match[1].replace(',', '.')) : null;
@@ -122,6 +126,12 @@ function extrairNomeCartao(texto) {
     .replace(/vence.*$/, '')
     .replace(/fechamento.*$/, '')
     .replace(/fecha.*$/, '')
+    .replace(/parcelado.*$/, '')
+    .replace(/parcelada.*$/, '')
+    .replace(/parcelamento.*$/, '')
+    .replace(/\b\d+\s*x.*$/, '')
+    .replace(/\b\d+\s+vezes.*$/, '')
+    .replace(/\b\d+\s+parcelas?.*$/, '')
     .replace(/valor.*$/, '')
     .replace(/hoje.*$/, '')
     .replace(/ontem.*$/, '')
@@ -321,57 +331,105 @@ function parsearCadastroCartao(texto) {
 }
 
 function parsearCadastroParcelamento(texto) {
-  const parcela = texto.match(/(?:parcelado\s+em\s+|em\s+)?(\d{1,2})x\b/) || texto.match(/\b(\d{1,2})\s+parcelas?\b/);
+  const totalParcelas = extrairTotalParcelas(texto);
   const composto = texto.match(/\b(\d{1,2})\/(\d{1,2})\b/);
-  const mencionaParcelado = parcela || composto || texto.includes('parcelado') || texto.includes('parcelamento') || texto.includes('divida');
-  const temAcao = /(cadastre|cadastrar|crie|criar|registre|registrar|tenho|fiz|comprei|peguei)/.test(texto);
+  const mencionaParcelado = totalParcelas || composto || /(parcelado|parcelada|parcelamento|parcelas?|vezes|\d+\s*x|divida|emprestimo|financiamento)/.test(texto);
+  const temAcao = /(cadastre|cadastrar|crie|criar|registre|registrar|tenho|fiz|comprei|compra|peguei|emprestimo|divida|devo|financiamento|\d{1,2}\s*x)/.test(texto);
 
   if (!mencionaParcelado || !temAcao) return null;
 
-  const totalParcelas = parcela ? Number(parcela[1]) : Number(composto?.[2] || 0);
-  if (!totalParcelas) return null;
+  const parcelasTotais = totalParcelas || Number(composto?.[2] || 0);
+  if (!parcelasTotais) return null;
 
   const parcelaAtual = composto ? Number(composto[1]) : 1;
-  const valorPorParcela = texto.match(/\b(?:de|por|parcela de|parcelas de)\s+(\d+[.,]?\d*)/);
-  const valorParcela = valorPorParcela
-    ? Number(valorPorParcela[1].replace(',', '.'))
-    : extrairNumeroDepoisDe(texto, 'parcela') || extrairNumeroDepoisDe(texto, 'parcelas') || extrairValor(texto);
+  const valores = extrairValoresParcelamento(texto, parcelasTotais);
+  if (!valores.valorParcela) return null;
+
   const formaPagamento = identificarFormaPagamento(texto, null);
   const cartao = formaPagamento === 'credito' ? extrairNomeCartao(texto) : null;
-  const tipoParcelamento = texto.includes('divida') || texto.includes('emprestimo') || texto.includes('acordo') ? 'divida' : 'compra';
+  const tipoParcelamento = texto.includes('divida') || texto.includes('emprestimo') || texto.includes('acordo') || texto.includes('financiamento') ? 'divida' : 'compra';
   const descricao = limparDescricaoParcelamento(texto, cartao);
 
   return {
     tipo: 'cadastrar_parcelamento',
     tipoParcelamento,
     descricao,
-    valorParcela,
-    totalParcelas,
+    valorParcela: valores.valorParcela,
+    valorTotal: valores.valorTotal,
+    totalParcelas: parcelasTotais,
     parcelasPagas: Math.max(0, parcelaAtual - 1),
     formaPagamento,
     cartao,
-    categoria: identificarCategoria(texto),
+    categoria: identificarCategoriaParcelamento(texto),
     dataInicio: extrairDataLancamento(texto)
+  };
+}
+
+function identificarCategoriaParcelamento(texto) {
+  const categoria = identificarCategoria(texto);
+  return categoria === 'cartao' ? 'outros' : categoria;
+}
+
+function extrairTotalParcelas(texto) {
+  const patterns = [
+    /\b(\d{1,2})\s*x\b/,
+    /\bem\s+(\d{1,2})\s*(?:x|vezes|parcelas?)\b/,
+    /\bparcelad[ao]\s+em\s+(\d{1,2})\s*(?:x|vezes|parcelas?)\b/,
+    /\b(\d{1,2})\s+parcelas?\b/,
+    /\b(\d{1,2})\s+vezes\b/
+  ];
+
+  for (const pattern of patterns) {
+    const match = texto.match(pattern);
+    if (match) return Number(match[1]);
+  }
+
+  return null;
+}
+
+function extrairValoresParcelamento(texto, totalParcelas) {
+  const valorParcelaMatch =
+    texto.match(/\b\d{1,2}\s*x\s+(?:de|por|no valor de)\s+(\d+[.,]?\d*)/) ||
+    texto.match(/\b\d{1,2}\s+(?:vezes|parcelas?)\s+(?:de|por|no valor de)\s+(\d+[.,]?\d*)/) ||
+    texto.match(/\bparcelas?\s+(?:de|por|no valor de)\s+(\d+[.,]?\d*)/) ||
+    texto.match(/\b(\d+[.,]?\d*)\s+(?:por|cada)\s+parcela\b/);
+
+  if (valorParcelaMatch) {
+    const valorParcela = Number(valorParcelaMatch[1].replace(',', '.'));
+    return {
+      valorParcela,
+      valorTotal: valorParcela * totalParcelas
+    };
+  }
+
+  const valores = extrairValores(texto).filter(valor => Number(valor) !== Number(totalParcelas));
+  const valorTotal = valores.length > 0 ? Math.max(...valores) : null;
+  return {
+    valorParcela: valorTotal ? Math.round((valorTotal / totalParcelas) * 100) / 100 : null,
+    valorTotal
   };
 }
 
 function limparDescricaoParcelamento(texto, cartao) {
   let descricao = texto
-    .replace(/\b(cadastre|cadastrar|crie|criar|registre|registrar|tenho|fiz|comprei|peguei)\b/g, '')
+    .replace(/\b(cadastre|cadastrar|crie|criar|registre|registrar|tenho|fiz|comprei|peguei|um|uma|o|a)\b/g, '')
     .replace(/\b(parcelamento|parcelado|parcelada|parceladas|parcelados|divida)\b/g, '')
+    .replace(/\b(reais|real|vezes)\b/g, '')
     .replace(/\b(em\s+)?\d{1,2}x\b/g, '')
     .replace(/\b\d{1,2}\s+parcelas?\b/g, '')
+    .replace(/\b\d{1,2}\s+vezes\b/g, '')
     .replace(/\b\d{1,2}\/\d{1,2}\b/g, '')
-    .replace(/\b(de|no valor de|valor|parcela|parcelas)\s+\d+[.,]?\d*/g, '')
+    .replace(/\b(de|no valor de|valor|parcela|parcelas|por)\s+\d+[.,]?\d*/g, '')
     .replace(/\d+[.,]?\d*/g, '')
     .replace(/\b(no credito|no debito|no pix|em pix|dinheiro|cartao|credito|debito)\b/g, '')
     .replace(/\s+/g, ' ')
     .trim();
 
-  if (cartao) descricao = descricao.replace(new RegExp(`\\b${cartao}\\b`, 'i'), '').trim();
+  if (cartao) descricao = descricao.replace(new RegExp(`\\b(?:no|na|do|da|de)?\\s*${cartao}\\b`, 'i'), '').trim();
   descricao = descricao.replace(/^(em|de|do|da|no|na|com)\b\s*/g, '').trim();
-  descricao = descricao.replace(/\s+\b(em|de|do|da|no|na|com)$/g, '').trim();
-  return descricao || 'parcelamento';
+  descricao = descricao.replace(/\s+(em|de|do|da|no|na|com)$/g, '').trim();
+  if (descricao) return descricao;
+  return /emprestimo/.test(texto) ? 'emprestimo' : /divida/.test(texto) ? 'divida' : 'parcelamento';
 }
 
 function parsearEdicaoCartao(texto) {

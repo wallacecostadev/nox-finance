@@ -109,8 +109,10 @@ function getTextoAjuda() {
 "excluir cartao Nubank"
 
 *Parcelamentos e dividas*
+"comprei perfume de 500 no cartao Nubank parcelado em 4x"
 "comprei celular parcelado em 10x de 120 no credito Nubank"
-"cadastre divida emprestimo em 6 parcelas de 300"
+"cadastre emprestimo de 1000 em 8 vezes"
+"cadastre divida em 6 parcelas de 300"
 "parcelamentos"
 "compras parceladas"
 "dividas"
@@ -345,7 +347,7 @@ async function cadastrarParcelamento(userId, parsed) {
 • Tipo: ${parsed.tipoParcelamento === 'divida' ? 'divida' : 'compra'}
 • Descricao: ${parsed.descricao}
 • Parcela: ${formatarMoeda(parsed.valorParcela)}
-• Progresso: ${parcelasPagas}/${parsed.totalParcelas}
+${parsed.valorTotal ? `• Total: ${formatarMoeda(parsed.valorTotal)}\n` : ''}• Progresso: ${parcelasPagas}/${parsed.totalParcelas}
 • Restante: ${formatarMoeda(parsed.valorParcela * (parsed.totalParcelas - parcelasPagas))}
 • Termina em: ${formatarDataBR(dataFim)}`;
 }

@@ -342,6 +342,15 @@ async function cadastrarParcelamento(userId, parsed) {
     status
   ]);
 
+  let parcelasNaFatura = 0;
+  if (cartaoId) {
+    parcelasNaFatura = await lancarParcelasNoCartao(userId, parsed, cartaoId, dataInicio);
+  }
+
+  const detalheFatura = parcelasNaFatura
+    ? `\n• Fatura: ${parcelasNaFatura} parcela(s) lancada(s) no cartao`
+    : '';
+
   return `📌 *Parcelamento cadastrado*
 
 • ID: #${resultado.lastID}
@@ -350,7 +359,29 @@ async function cadastrarParcelamento(userId, parsed) {
 • Parcela: ${formatarMoeda(parsed.valorParcela)}
 ${parsed.valorTotal ? `• Total: ${formatarMoeda(parsed.valorTotal)}\n` : ''}• Progresso: ${parcelasPagas}/${parsed.totalParcelas}
 • Restante: ${formatarMoeda(restante)}
-• Termina em: ${formatarDataBR(dataFim)}`;
+• Termina em: ${formatarDataBR(dataFim)}${detalheFatura}`;
+}
+
+async function lancarParcelasNoCartao(userId, parsed, cartaoId, dataInicio) {
+  const totalParcelas = Number(parsed.totalParcelas || 0);
+  for (let i = 0; i < totalParcelas; i += 1) {
+    await run(getDb(), `
+      INSERT INTO lancamentos (
+        usuario_id, valor, categoria, descricao, tipo, forma_pagamento, cartao_id, data_lancamento
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    `, [
+      userId,
+      parsed.valorParcela,
+      parsed.categoria || 'outros',
+      `${parsed.descricao} (${i + 1}/${totalParcelas})`,
+      'cartao',
+      'credito',
+      cartaoId,
+      adicionarMesesISO(dataInicio, i)
+    ]);
+  }
+
+  return totalParcelas;
 }
 
 function calcularRestanteParcelamento(parsed, parcelasPagas) {

@@ -170,7 +170,7 @@ async function registrarLancamento(userId, parsed) {
 async function cadastrarCartao(userId, parsed) {
   const nome = formatarNomeCartao(parsed.nome);
   if (!nome || nome.toLowerCase() === 'cartao') {
-    return 'Qual o nome do cartao? Exemplo: "cartao Inter limite 2000 vencimento 10"';
+    return 'Qual o nome do cartão? Exemplo: "cartão Inter limite 2000 vencimento 10".';
   }
 
   const existente = await obterCartaoPorNomeExato(userId, nome);
@@ -199,12 +199,12 @@ async function cadastrarCartao(userId, parsed) {
     }
 
     const atualizado = await getCartaoPorId(userId, existente.id);
-    return `💳 *Cartao atualizado*
+    return `💳 *Cartão atualizado*
 
-• Cartao: ${atualizado.nome}
+• Cartão: ${atualizado.nome}
 • Limite: ${formatarMoeda(atualizado.limite || 0)}
-• Vencimento: dia ${atualizado.dia_vencimento || 'nao informado'}
-• Fechamento: dia ${atualizado.dia_fechamento || 'nao informado'}`;
+• Vencimento: dia ${atualizado.dia_vencimento || 'não informado'}
+• Fechamento: dia ${atualizado.dia_fechamento || 'não informado'}`;
   }
 
   await run(getDb(), `
@@ -217,22 +217,22 @@ async function cadastrarCartao(userId, parsed) {
       ativo = 1
   `, [userId, nome, parsed.limite ?? 0, parsed.vencimento || null, parsed.fechamento || null]);
 
-  return `💳 *Cartao cadastrado*
+  return `💳 *Cartão cadastrado*
 
-• Cartao: ${nome}
+• Cartão: ${nome}
 • Limite: ${formatarMoeda(parsed.limite ?? 0)}
-• Vencimento: dia ${parsed.vencimento || 'nao informado'}
-• Fechamento: dia ${parsed.fechamento || 'nao informado'}`;
+• Vencimento: dia ${parsed.vencimento || 'não informado'}
+• Fechamento: dia ${parsed.fechamento || 'não informado'}`;
 }
 
 async function editarCartao(userId, parsed) {
-  if (!parsed.nome) {
-    return 'Qual cartao voce quer editar? Exemplo: "editar cartao Nubank limite 5000"';
+  if (!parsed.id && !parsed.nome) {
+    return 'Qual cartão você quer editar? Exemplo: "editar cartão #5 limite 5000" ou "editar cartão Nubank limite 5000".';
   }
 
-  const cartao = await obterCartaoPorNome(userId, parsed.nome);
+  const cartao = await obterCartaoAlvo(userId, parsed);
   if (!cartao) {
-    return `Nao encontrei o cartao "${parsed.nome}". Use "cartao" para ver os cadastrados.`;
+    return `Não encontrei esse cartão. Use "cartões" para ver a lista com os IDs.`;
   }
 
   const updates = [];
@@ -254,36 +254,38 @@ async function editarCartao(userId, parsed) {
   }
 
   if (updates.length === 0) {
-    return 'Diga o que quer editar. Exemplo: "editar cartao Nubank limite 5000 vencimento 15"';
+    return 'Diga o que quer editar. Exemplo: "editar cartão #5 limite 5000 vencimento 15".';
   }
 
   params.push(cartao.id, userId);
   await run(getDb(), `UPDATE cartoes_credito SET ${updates.join(', ')} WHERE id = ? AND usuario_id = ?`, params);
 
   const atualizado = await getCartaoPorId(userId, cartao.id);
-  return `💳 *Cartao atualizado*
+  return `💳 *Cartão atualizado*
 
-• Cartao: ${atualizado.nome}
+• ID: #${atualizado.id}
+• Cartão: ${atualizado.nome}
 • Limite: ${formatarMoeda(atualizado.limite || 0)}
-• Vencimento: dia ${atualizado.dia_vencimento || 'nao informado'}
-• Fechamento: dia ${atualizado.dia_fechamento || 'nao informado'}`;
+• Vencimento: dia ${atualizado.dia_vencimento || 'não informado'}
+• Fechamento: dia ${atualizado.dia_fechamento || 'não informado'}`;
 }
 
 async function excluirCartao(userId, parsed) {
-  if (!parsed.nome) {
-    return 'Qual cartao voce quer excluir? Exemplo: "excluir cartao Nubank"';
+  if (!parsed.id && !parsed.nome) {
+    return 'Qual cartão você quer excluir? Exemplo: "excluir cartão #5" ou "excluir cartão Nubank". Use "cartões" para ver os IDs.';
   }
 
-  const cartao = await obterCartaoPorNome(userId, parsed.nome);
+  const cartao = await obterCartaoAlvo(userId, parsed);
   if (!cartao) {
-    return `Nao encontrei o cartao "${parsed.nome}". Use "cartao" para ver os cadastrados.`;
+    return `Não encontrei esse cartão. Use "cartões" para ver a lista com os IDs.`;
   }
 
   await run(getDb(), 'UPDATE cartoes_credito SET ativo = 0 WHERE id = ? AND usuario_id = ?', [cartao.id, userId]);
-  return `🗑️ *Cartao removido*
+  return `🗑️ *Cartão removido*
 
-• Cartao: ${cartao.nome}
-• Historico: os lancamentos antigos continuam no extrato.`;
+• ID: #${cartao.id}
+• Cartão: ${cartao.nome}
+• Histórico: os lançamentos antigos continuam no extrato.`;
 }
 async function cadastrarParcelamento(userId, parsed) {
   if (!parsed.valorParcela || !parsed.totalParcelas) {
@@ -390,10 +392,10 @@ async function responderCartoes(userId, periodo) {
     const disponivel = limite - fatura;
     const uso = limite > 0 ? Math.round((fatura / limite) * 100) : 0;
 
-    return `💳 *${c.nome}*\n• Fatura: ${formatarMoeda(fatura)}\n• Limite: ${formatarMoeda(limite)}\n• Disponivel: ${formatarMoeda(disponivel)}\n• Uso: ${uso}%\n• Vencimento: dia ${c.dia_vencimento || '-'}\n• Fechamento: dia ${c.dia_fechamento || '-'}`;
+    return `💳 *#${c.id} - ${c.nome}*\n• Fatura: ${formatarMoeda(fatura)}\n• Limite: ${formatarMoeda(limite)}\n• Disponível: ${formatarMoeda(disponivel)}\n• Uso: ${uso}%\n• Vencimento: dia ${c.dia_vencimento || '-'}\n• Fechamento: dia ${c.dia_fechamento || '-'}`;
   }).join('\n\n');
 
-  return `💳 *Meus cartoes - ${intervalo.rotulo}*\n\n${blocos}\n\n📌 *Resumo*\n• Fatura total: ${formatarMoeda(totalFatura)}\n• Limite total: ${formatarMoeda(totalLimite)}\n• Disponivel total: ${formatarMoeda(totalLimite - totalFatura)}`;
+  return `💳 *Meus cartões - ${intervalo.rotulo}*\n\n${blocos}\n\n📌 *Resumo*\n• Fatura total: ${formatarMoeda(totalFatura)}\n• Limite total: ${formatarMoeda(totalLimite)}\n• Disponível total: ${formatarMoeda(totalLimite - totalFatura)}\n\nPara apagar: "excluir cartão #ID"\nPara editar: "editar cartão #ID limite 3000"`;
 }
 
 async function responderFatura(userId, nomeCartao, periodo) {
@@ -619,6 +621,19 @@ async function obterCartaoPorNome(userId, nomeCartao) {
     ORDER BY nome
     LIMIT 1
   `, [userId, `%${String(nomeCartao).toLowerCase()}%`]);
+}
+
+async function obterCartaoAlvo(userId, parsed) {
+  if (parsed.id) {
+    const porId = await getCartaoPorId(userId, parsed.id);
+    if (porId && Number(porId.ativo) !== 0 && porId.ativo !== false) return porId;
+  }
+
+  if (parsed.nome) {
+    return obterCartaoPorNome(userId, parsed.nome);
+  }
+
+  return null;
 }
 
 async function obterCartaoPorNomeExato(userId, nomeCartao) {

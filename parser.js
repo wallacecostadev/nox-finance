@@ -349,6 +349,7 @@ function parsearEdicaoCartao(texto) {
 
   return {
     tipo: 'editar_cartao',
+    id: extrairIdCartao(texto),
     nome: extrairNomeCartaoParaComando(texto),
     limite: extrairNumeroDepoisDe(texto, 'limite'),
     vencimento: extrairNumeroDepoisDe(texto, 'vencimento') || extrairNumeroDepoisDe(texto, 'vence'),
@@ -363,8 +364,17 @@ function parsearExclusaoCartao(texto) {
 
   return {
     tipo: 'excluir_cartao',
+    id: extrairIdCartao(texto),
     nome: extrairNomeCartaoParaComando(texto)
   };
+}
+
+function extrairIdCartao(texto) {
+  const explicito = texto.match(/(?:#|id\s+)(\d+)\b/);
+  if (explicito) return Number(explicito[1]);
+
+  const aposCartao = texto.match(/\b(?:cartao|credito)\s+(\d+)\b/);
+  return aposCartao ? Number(aposCartao[1]) : null;
 }
 
 function limparNomeCartaoCadastro(nome) {
@@ -380,7 +390,7 @@ function extrairNomeCartaoParaComando(texto) {
   const semAcoes = texto
     .replace(/\b(editar|edite|alterar|altere|mudar|mude|ajustar|ajuste|corrigir|corrija|atualizar|atualize|apagar|excluir|deletar|remover|cancelar)\b/g, '')
     .replace(/\b(limite|vencimento|vence|fechamento|fecha|para|de|do|da|com|valor|dia)\b/g, '')
-    .replace(/\d+[.,]?\d*/g, '')
+    .replace(/(?:#|id\s*)?\d+[.,]?\d*/g, '')
     .replace(/\b(cartao|credito)\b/g, '')
     .replace(/\s+/g, ' ')
     .trim();

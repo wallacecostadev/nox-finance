@@ -163,7 +163,7 @@ async function runSupabase(db, sql, params = []) {
       tipo: params[4],
       forma_pagamento: params[5],
       cartao_id: params[6],
-      data_lancamento: hojeISO()
+      data_lancamento: params[7] || hojeISO()
     };
     const { data, error } = await client.from('lancamentos').insert(payload).select('id').single();
     if (error) throw error;
@@ -392,7 +392,12 @@ function normalizarSql(sql) {
 }
 
 function hojeISO() {
-  return new Date().toISOString().slice(0, 10);
+  const hoje = new Date();
+  return [
+    hoje.getFullYear(),
+    String(hoje.getMonth() + 1).padStart(2, '0'),
+    String(hoje.getDate()).padStart(2, '0')
+  ].join('-');
 }
 
 function categoriasPadrao() {

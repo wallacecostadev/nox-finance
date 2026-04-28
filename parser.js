@@ -122,6 +122,7 @@ function extrairNomeCartao(texto) {
     .replace(/ano passado.*$/, '')
     .replace(/ano anterior.*$/, '')
     .replace(/ano.*$/, '')
+    .replace(/\s+(em|dia)\s+\d.*$/, '')
     .trim();
 
   for (const palavra of Object.keys(CATEGORIAS)) {
@@ -193,6 +194,48 @@ function identificarPeriodo(texto) {
   if (texto.includes('ano passado') || texto.includes('ano anterior')) return { tipo: 'ano_passado' };
   if (texto.includes('ano')) return { tipo: 'ano' };
   return { tipo: 'mes' };
+}
+
+function extrairDataLancamento(texto) {
+  const periodo = identificarPeriodo(texto);
+  const hoje = inicioDoDia(new Date());
+
+  if (periodo.tipo === 'dia_especifico') {
+    const ano = periodo.ano || hoje.getFullYear();
+    return formatarDataISO(new Date(ano, periodo.mes - 1, periodo.dia));
+  }
+
+  if (periodo.tipo === 'ontem') return formatarDataISO(adicionarDias(hoje, -1));
+  if (periodo.tipo === 'anteontem') return formatarDataISO(adicionarDias(hoje, -2));
+  if (periodo.tipo === 'hoje') return formatarDataISO(hoje);
+
+  if (periodo.tipo === 'mes_passado') {
+    const data = new Date(hoje.getFullYear(), hoje.getMonth() - 1, Math.min(hoje.getDate(), 28));
+    return formatarDataISO(data);
+  }
+
+  if (periodo.tipo === 'mes_especifico') {
+    const ano = periodo.ano || hoje.getFullYear();
+    return formatarDataISO(new Date(ano, periodo.mes - 1, 1));
+  }
+
+  return formatarDataISO(hoje);
+}
+
+function inicioDoDia(data) {
+  return new Date(data.getFullYear(), data.getMonth(), data.getDate());
+}
+
+function adicionarDias(data, dias) {
+  return new Date(data.getFullYear(), data.getMonth(), data.getDate() + dias);
+}
+
+function formatarDataISO(data) {
+  return [
+    data.getFullYear(),
+    String(data.getMonth() + 1).padStart(2, '0'),
+    String(data.getDate()).padStart(2, '0')
+  ].join('-');
 }
 
 function normalizarAno(ano) {
@@ -302,9 +345,14 @@ function parsearExclusao(texto) {
 
 function limparDescricao(texto) {
   const descricao = texto
+    .replace(/\bdia\s+\d{1,2}[\/.-]\d{1,2}(?:[\/.-]\d{2,4})?\b/g, '')
+    .replace(/\bem\s+\d{1,2}[\/.-]\d{1,2}(?:[\/.-]\d{2,4})?\b/g, '')
+    .replace(/\b\d{1,2}[\/.-]\d{1,2}(?:[\/.-]\d{2,4})?\b/g, '')
     .replace(/[0-9.,]+/g, '')
     .replace(/gastei|gasto|paguei|pago|comprei|compra|recebi|ganhei|entrei/g, '')
     .replace(/no credito|no debito|no pix|em pix|dinheiro|cartao|credito|debito/g, '')
+    .replace(/hoje|ontem|anteontem|semana passada|semana anterior|mes passado|mes anterior|dia/g, '')
+    .replace(/\b(janeiro|fevereiro|marco|abril|maio|junho|julho|agosto|setembro|outubro|novembro|dezembro)\b/g, '')
     .replace(/\s+/g, ' ')
     .trim();
 
@@ -350,7 +398,8 @@ function parsearMensagem(mensagem) {
     categoria,
     descricao: descricao || categoria,
     formaPagamento,
-    cartao
+    cartao,
+    dataLancamento: extrairDataLancamento(texto)
   };
 }
 

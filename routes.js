@@ -22,10 +22,13 @@ async function processarMensagem(whatsappId, mensagem) {
   if (parsed.tipo === 'desconhecido') {
     return `*Nox Finance*
 
-Nao entendi sua mensagem. Tente:
+Nao entendi sua mensagem ainda.
+
+Tente um destes exemplos:
 "recebi 500 do salario"
 "gastei 150 no mercado no pix"
 "gastei 80 no credito nubank"
+"gastei 60 no mercado ontem"
 "saldo atual"
 "extrato"
 "ajuda"`;
@@ -46,17 +49,17 @@ Nao entendi sua mensagem. Tente:
     if (parsed.o === 'gastos') {
       const intervalo = resolverIntervalo(parsed.periodo);
       const total = await getTotalPorTipo(userId, 'despesa', intervalo);
-      return `*Gastos - ${intervalo.rotulo}*
+      return `💸 *Gastos - ${intervalo.rotulo}*
 
-Total: ${formatarMoeda(total)}`;
+• Total: ${formatarMoeda(total)}`;
     }
 
     if (parsed.o === 'receitas') {
       const intervalo = resolverIntervalo(parsed.periodo);
       const total = await getTotalPorTipo(userId, 'receita', intervalo);
-      return `*Receitas - ${intervalo.rotulo}*
+      return `💰 *Receitas - ${intervalo.rotulo}*
 
-Total: ${formatarMoeda(total)}`;
+• Total: ${formatarMoeda(total)}`;
     }
   }
 
@@ -87,6 +90,8 @@ function getTextoAjuda() {
 "gastei 150 no mercado no pix"
 "paguei 80 de luz no debito"
 "comprei 40 no dinheiro"
+"gastei 60 no mercado ontem"
+"gastei 120 no ifood dia 15/03"
 
 *Cartao de credito*
 "cadastrar cartao Nubank limite 4000 vencimento 10"
@@ -102,6 +107,9 @@ function getTextoAjuda() {
 "saldo atual"
 "extrato"
 "quanto gastei no mes?"
+"extrato mes passado"
+"gastos de ontem"
+"receitas de marco 2026"
 
 *Correcao manual*
 "corrigir ultimo valor 95"
@@ -125,7 +133,7 @@ async function registrarLancamento(userId, parsed) {
   const resultado = await run(getDb(), `
     INSERT INTO lancamentos (
       usuario_id, valor, categoria, descricao, tipo, forma_pagamento, cartao_id, data_lancamento
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, date("now"))
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
   `, [
     userId,
     parsed.valor,
@@ -133,19 +141,21 @@ async function registrarLancamento(userId, parsed) {
     parsed.descricao,
     parsed.tipo,
     parsed.formaPagamento,
-    cartaoId
+    cartaoId,
+    parsed.dataLancamento || dataHojeISO()
   ]);
 
   const detalheCartao = cartaoId ? `\nCartao: ${(await getCartaoPorId(userId, cartaoId)).nome}` : '';
 
-  return `*Lancamento registrado!*
+  return `✅ *Lancamento registrado*
 
-ID: ${resultado.lastID}
-Tipo: ${nomeTipo(parsed.tipo)}
-Valor: ${formatarMoeda(parsed.valor)}
-Categoria: ${parsed.categoria}
-Pagamento: ${nomeForma(parsed.formaPagamento)}${detalheCartao}
-Descricao: ${parsed.descricao}`;
+• ID: #${resultado.lastID}
+• Tipo: ${nomeTipo(parsed.tipo)}
+• Valor: ${formatarMoeda(parsed.valor)}
+• Data: ${formatarDataBR(parsed.dataLancamento || dataHojeISO())}
+• Categoria: ${parsed.categoria}
+• Pagamento: ${nomeForma(parsed.formaPagamento)}${detalheCartao}
+• Descricao: ${parsed.descricao}`;
 }
 
 async function cadastrarCartao(userId, parsed) {
@@ -161,12 +171,12 @@ async function cadastrarCartao(userId, parsed) {
       ativo = 1
   `, [userId, nome, parsed.limite || 0, parsed.vencimento || null, parsed.fechamento || null]);
 
-  return `*Cartao cadastrado!*
+  return `💳 *Cartao cadastrado*
 
-Cartao: ${nome}
-Limite: ${formatarMoeda(parsed.limite || 0)}
-Vencimento: dia ${parsed.vencimento || 'nao informado'}
-Fechamento: dia ${parsed.fechamento || 'nao informado'}`;
+• Cartao: ${nome}
+• Limite: ${formatarMoeda(parsed.limite || 0)}
+• Vencimento: dia ${parsed.vencimento || 'nao informado'}
+• Fechamento: dia ${parsed.fechamento || 'nao informado'}`;
 }
 
 async function editarCartao(userId, parsed) {
@@ -205,7 +215,12 @@ async function editarCartao(userId, parsed) {
   await run(getDb(), `UPDATE cartoes_credito SET ${updates.join(', ')} WHERE id = ? AND usuario_id = ?`, params);
 
   const atualizado = await getCartaoPorId(userId, cartao.id);
-  return `*Cartao atualizado!*\n\nCartao: ${atualizado.nome}\nLimite: ${formatarMoeda(atualizado.limite || 0)}\nVencimento: dia ${atualizado.dia_vencimento || 'nao informado'}\nFechamento: dia ${atualizado.dia_fechamento || 'nao informado'}`;
+  return `💳 *Cartao atualizado*
+
+• Cartao: ${atualizado.nome}
+• Limite: ${formatarMoeda(atualizado.limite || 0)}
+• Vencimento: dia ${atualizado.dia_vencimento || 'nao informado'}
+• Fechamento: dia ${atualizado.dia_fechamento || 'nao informado'}`;
 }
 
 async function excluirCartao(userId, parsed) {
@@ -219,7 +234,10 @@ async function excluirCartao(userId, parsed) {
   }
 
   await run(getDb(), 'UPDATE cartoes_credito SET ativo = 0 WHERE id = ? AND usuario_id = ?', [cartao.id, userId]);
-  return `Cartao ${cartao.nome} removido da sua lista. Os lancamentos antigos continuam no extrato.`;
+  return `🗑️ *Cartao removido*
+
+• Cartao: ${cartao.nome}
+• Historico: os lancamentos antigos continuam no extrato.`;
 }
 async function responderCartoes(userId, periodo) {
   const intervalo = resolverIntervalo(periodo);
@@ -244,10 +262,10 @@ async function responderCartoes(userId, periodo) {
     const disponivel = limite - fatura;
     const uso = limite > 0 ? Math.round((fatura / limite) * 100) : 0;
 
-    return `*${c.nome}*\nFatura: ${formatarMoeda(fatura)}\nLimite: ${formatarMoeda(limite)}\nDisponivel: ${formatarMoeda(disponivel)}\nUso: ${uso}%\nVencimento: dia ${c.dia_vencimento || '-'}\nFechamento: dia ${c.dia_fechamento || '-'}`;
+    return `💳 *${c.nome}*\n• Fatura: ${formatarMoeda(fatura)}\n• Limite: ${formatarMoeda(limite)}\n• Disponivel: ${formatarMoeda(disponivel)}\n• Uso: ${uso}%\n• Vencimento: dia ${c.dia_vencimento || '-'}\n• Fechamento: dia ${c.dia_fechamento || '-'}`;
   }).join('\n\n');
 
-  return `*Meus cartoes*\n\n${blocos}\n\n*Resumo*\nFatura total: ${formatarMoeda(totalFatura)}\nLimite total: ${formatarMoeda(totalLimite)}\nDisponivel total: ${formatarMoeda(totalLimite - totalFatura)}`;
+  return `💳 *Meus cartoes - ${intervalo.rotulo}*\n\n${blocos}\n\n📌 *Resumo*\n• Fatura total: ${formatarMoeda(totalFatura)}\n• Limite total: ${formatarMoeda(totalLimite)}\n• Disponivel total: ${formatarMoeda(totalLimite - totalFatura)}`;
 }
 
 async function responderFatura(userId, nomeCartao, periodo) {
@@ -273,15 +291,15 @@ async function responderFatura(userId, nomeCartao, periodo) {
 
   const texto = rows.map(r => {
     const disponivel = Number(r.limite || 0) - Number(r.total || 0);
-    return `${r.cartao}: ${formatarMoeda(r.total)} | limite ${formatarMoeda(r.limite || 0)} | disponivel ${formatarMoeda(disponivel)} | vence dia ${r.dia_vencimento || '-'}`;
+    return `💳 *${r.cartao}*\n• Fatura: ${formatarMoeda(r.total)}\n• Limite: ${formatarMoeda(r.limite || 0)}\n• Disponivel: ${formatarMoeda(disponivel)}\n• Vence: dia ${r.dia_vencimento || '-'}`;
   }).join('\n');
 
   const total = rows.reduce((sum, r) => sum + Number(r.total || 0), 0);
-  return `*Fatura de cartao - ${intervalo.rotulo}*
+  return `💳 *Fatura - ${intervalo.rotulo}*
 
 ${texto}
 
-Total: ${formatarMoeda(total)}`;
+📌 Total: ${formatarMoeda(total)}`;
 }
 
 async function corrigirLancamento(userId, parsed) {
@@ -326,13 +344,13 @@ async function corrigirLancamento(userId, parsed) {
   `, params);
 
   const atualizado = await getLancamentoComCartao(userId, lancamento.id);
-  return `*Lancamento corrigido!*
+  return `✅ *Lancamento corrigido*
 
-ID: ${atualizado.id}
-Tipo: ${nomeTipo(atualizado.tipo)}
-Valor: ${formatarMoeda(atualizado.valor)}
-Pagamento: ${nomeForma(atualizado.forma_pagamento)}
-Descricao: ${atualizado.descricao}`;
+• ID: #${atualizado.id}
+• Tipo: ${nomeTipo(atualizado.tipo)}
+• Valor: ${formatarMoeda(atualizado.valor)}
+• Pagamento: ${nomeForma(atualizado.forma_pagamento)}
+• Descricao: ${atualizado.descricao}`;
 }
 
 async function excluirLancamento(userId, parsed) {
@@ -342,7 +360,11 @@ async function excluirLancamento(userId, parsed) {
   }
 
   await run(getDb(), 'DELETE FROM lancamentos WHERE id = ? AND usuario_id = ?', [lancamento.id, userId]);
-  return `Lancamento ${lancamento.id} apagado: ${formatarMoeda(lancamento.valor)} - ${lancamento.descricao}`;
+  return `🗑️ *Lancamento apagado*
+
+• ID: #${lancamento.id}
+• Valor: ${formatarMoeda(lancamento.valor)}
+• Descricao: ${lancamento.descricao}`;
 }
 
 async function responderSaldo(userId, periodo) {
@@ -350,12 +372,13 @@ async function responderSaldo(userId, periodo) {
   const saldo = await getSaldo(userId, intervalo);
   const fatura = await getTotalPorTipo(userId, 'cartao', intervalo);
 
-  return `*Saldo - ${intervalo.rotulo}*
+  return `📊 *Saldo - ${intervalo.rotulo}*
 
-Receitas: ${formatarMoeda(saldo.receitas)}
-Despesas pagas: ${formatarMoeda(saldo.despesas)}
-Fatura cartao: ${formatarMoeda(fatura)}
-*Saldo sem cartao: ${formatarMoeda(saldo.saldo)}*`;
+• Receitas: ${formatarMoeda(saldo.receitas)}
+• Despesas pagas: ${formatarMoeda(saldo.despesas)}
+• Fatura cartao: ${formatarMoeda(fatura)}
+
+💰 *Saldo sem cartao: ${formatarMoeda(saldo.saldo)}*`;
 }
 
 async function responderExtrato(userId, periodo) {
@@ -366,10 +389,10 @@ async function responderExtrato(userId, periodo) {
   const texto = extrato.map(l => {
     const sinal = l.tipo === 'receita' ? '+' : '-';
     const cartao = l.cartao_nome ? ` | ${l.cartao_nome}` : '';
-    return `#${l.id} ${sinal} ${formatarMoeda(l.valor)} | ${nomeForma(l.forma_pagamento)}${cartao} | ${l.descricao}`;
+    return `#${l.id} ${sinal} ${formatarMoeda(l.valor)} | ${formatarDataBR(l.data_lancamento)} | ${nomeForma(l.forma_pagamento)}${cartao} | ${l.descricao}`;
   }).join('\n');
 
-  return `*Extrato - ${intervalo.rotulo}*\n\n${texto}`;
+  return `📋 *Extrato - ${intervalo.rotulo}*\n\n${texto}`;
 }
 
 async function getSaldo(userId, intervalo) {
@@ -519,9 +542,18 @@ function criarIntervalo(inicio, fim, rotulo) {
 
 function estaNoIntervalo(valorData, intervalo) {
   if (!intervalo) return true;
-  const data = new Date(valorData);
+  const data = parseDataLocal(valorData);
   if (Number.isNaN(data.getTime())) return false;
   return data >= intervalo.inicio && data <= intervalo.fim;
+}
+
+function parseDataLocal(valorData) {
+  const texto = String(valorData || '');
+  const match = texto.match(/^(\d{4})-(\d{2})-(\d{2})/);
+  if (match) {
+    return new Date(Number(match[1]), Number(match[2]) - 1, Number(match[3]));
+  }
+  return new Date(valorData);
 }
 
 function inicioDoDia(data) {
@@ -551,6 +583,24 @@ function nomeMes(mes) {
 function formatarData(data) {
   return String(data.getDate()).padStart(2, '0') + '/' + String(data.getMonth() + 1).padStart(2, '0') + '/' + data.getFullYear();
 }
+
+function dataHojeISO() {
+  const hoje = new Date();
+  return [
+    hoje.getFullYear(),
+    String(hoje.getMonth() + 1).padStart(2, '0'),
+    String(hoje.getDate()).padStart(2, '0')
+  ].join('-');
+}
+
+function formatarDataBR(valor) {
+  if (!valor) return '-';
+  const texto = String(valor).slice(0, 10);
+  const [ano, mes, dia] = texto.split('-');
+  if (!ano || !mes || !dia) return texto;
+  return `${dia}/${mes}/${ano}`;
+}
+
 function formatarMoeda(valor) {
   return `R$ ${Number(valor || 0).toFixed(2)}`;
 }

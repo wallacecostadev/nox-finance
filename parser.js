@@ -63,6 +63,9 @@ function normalizar(texto) {
     .toLowerCase()
     .normalize('NFD')
     .replace(/[\u0300-\u036f]/g, '')
+    .replace(/\.(?!\d)/g, ' ')
+    .replace(/[!?;:]/g, ' ')
+    .replace(/\s+/g, ' ')
     .trim();
 }
 
@@ -75,6 +78,14 @@ function extrairValor(texto) {
 function extrairNumeroDepoisDe(texto, palavra) {
   const match = texto.match(new RegExp(`${palavra}\\s+(?:de\\s+|dia\\s+)?(\\d+[.,]?\\d*)`));
   return match ? Number(match[1].replace(',', '.')) : null;
+}
+
+function extrairLimiteCartao(texto) {
+  const depois = extrairNumeroDepoisDe(texto, 'limite');
+  if (depois !== null) return depois;
+
+  const antes = texto.match(/\b(\d+[.,]?\d*)\s+(?:de\s+)?limite\b/);
+  return antes ? Number(antes[1].replace(',', '.')) : null;
 }
 
 function identificarTipo(texto) {
@@ -275,10 +286,10 @@ function parsearCadastroCartao(texto) {
   const ehCadastro = temAcaoCadastro || cadastroCurto || (temDadosDeCartao && !pareceGasto);
   if (!ehCadastro) return null;
 
-  const limite = extrairNumeroDepoisDe(texto, 'limite') || extrairValor(texto);
+  const limite = extrairLimiteCartao(texto) || extrairValor(texto);
   const vencimento = extrairNumeroDepoisDe(texto, 'vencimento') || extrairNumeroDepoisDe(texto, 'vence');
   const fechamento = extrairNumeroDepoisDe(texto, 'fechamento') || extrairNumeroDepoisDe(texto, 'fecha');
-  const nomeMatch = texto.match(/(?:cartao|credito)\s+(?:um|uma|o|a|meu|minha|do|da|de)?\s*([a-z0-9 ]+?)(?:\s+com|\s+limite|\s+vencimento|\s+vence|\s+fechamento|\s+fecha|$)/);
+  const nomeMatch = texto.match(/(?:cartao|credito)\s+(?:um|uma|o|a|meu|minha|do|da|de)?\s*([a-z0-9 ]+?)(?:\s+\d+[.,]?\d*\s+(?:de\s+)?limite|\s+com|\s+limite|\s+vencimento|\s+vence|\s+fechamento|\s+fecha|$)/);
   const nome = cadastroCurto && !temDadosDeCartao
     ? limparNomeCartaoCadastro(cadastroCurto[1])
     : nomeMatch
@@ -362,7 +373,7 @@ function parsearEdicaoCartao(texto) {
     id: extrairIdCartao(texto),
     nome: extrairNomeCartaoParaComando(texto),
     novoNome,
-    limite: extrairNumeroDepoisDe(texto, 'limite'),
+    limite: extrairLimiteCartao(texto),
     vencimento: extrairNumeroDepoisDe(texto, 'vencimento') || extrairNumeroDepoisDe(texto, 'vence'),
     fechamento: extrairNumeroDepoisDe(texto, 'fechamento') || extrairNumeroDepoisDe(texto, 'fecha')
   };

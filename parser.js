@@ -58,7 +58,7 @@ function extrairValor(texto) {
 }
 
 function extrairNumeroDepoisDe(texto, palavra) {
-  const match = texto.match(new RegExp(`${palavra}\\s+(\\d+[.,]?\\d*)`));
+  const match = texto.match(new RegExp(`${palavra}\\s+(?:de\\s+|dia\\s+)?(\\d+[.,]?\\d*)`));
   return match ? Number(match[1].replace(',', '.')) : null;
 }
 
@@ -110,7 +110,16 @@ function identificarConsulta(texto) {
   if (temValor) return null;
 
   if (texto.includes('ajuda') || texto.includes('comandos')) return { tipo: 'ajuda' };
-  if (texto.includes('cartoes') || texto.includes('meus cartoes') || texto.includes('listar cartoes')) return { tipo: 'listar_cartoes' };
+  if (
+    texto === 'cartao' ||
+    texto === 'cartoes' ||
+    texto.includes('meu cartao') ||
+    texto.includes('meus cartoes') ||
+    texto.includes('listar cartao') ||
+    texto.includes('listar cartoes')
+  ) {
+    return { tipo: 'listar_cartoes' };
+  }
   if (texto.includes('fatura') || texto.includes('cartao de credito') || texto.includes('cartao credito')) {
     return { tipo: 'fatura', cartao: extrairNomeCartao(texto) };
   }
@@ -137,14 +146,18 @@ function identificarPeriodo(texto) {
 }
 
 function parsearCadastroCartao(texto) {
-  const ehCadastro = /(cadastrar|cadastre|criar|adicionar|add).*(cartao|credito)/.test(texto);
+  const mencionaCartao = /(cartao|credito)/.test(texto);
+  const temAcaoCadastro = /(cadastrar|cadastre|cadastrei|cadastra|cadastrado|criar|crie|criei|adicionar|adicione|adicionei|add|tenho|meu|minha).*(cartao|credito)/.test(texto);
+  const temDadosDeCartao = mencionaCartao && /(limite|vencimento|vence|fechamento|fecha)/.test(texto);
+  const pareceGasto = PALAVRAS_DESPESA.some(p => texto.includes(p));
+  const ehCadastro = temAcaoCadastro || (temDadosDeCartao && !pareceGasto);
   if (!ehCadastro) return null;
 
   const limite = extrairNumeroDepoisDe(texto, 'limite') || extrairValor(texto);
   const vencimento = extrairNumeroDepoisDe(texto, 'vencimento') || extrairNumeroDepoisDe(texto, 'vence');
   const fechamento = extrairNumeroDepoisDe(texto, 'fechamento') || extrairNumeroDepoisDe(texto, 'fecha');
-  const nomeMatch = texto.match(/(?:cartao|credito)\s+([a-z0-9 ]+?)(?:\s+limite|\s+vencimento|\s+vence|\s+fechamento|\s+fecha|$)/);
-  const nome = nomeMatch ? nomeMatch[1].trim() : null;
+  const nomeMatch = texto.match(/(?:cartao|credito)\s+(?:um|uma|o|a|meu|minha|do|da|de)?\s*([a-z0-9 ]+?)(?:\s+com|\s+limite|\s+vencimento|\s+vence|\s+fechamento|\s+fecha|$)/);
+  const nome = nomeMatch ? limparNomeCartaoCadastro(nomeMatch[1]) : null;
 
   return {
     tipo: 'cadastrar_cartao',
@@ -153,6 +166,15 @@ function parsearCadastroCartao(texto) {
     vencimento,
     fechamento
   };
+}
+
+function limparNomeCartaoCadastro(nome) {
+  const limpo = String(nome || '')
+    .replace(/\b(um|uma|o|a|meu|minha|do|da|de)\b/g, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+
+  return limpo || null;
 }
 
 function parsearCorrecao(texto) {

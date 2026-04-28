@@ -196,13 +196,13 @@ async function responderFatura(userId, nomeCartao) {
 
   const rows = await all(getDb(), `
     SELECT
-      COALESCE(c.nome, 'Sem cartao') as cartao,
+      c.nome as cartao,
       COALESCE(c.limite, 0) as limite,
       c.dia_vencimento,
-      COALESCE(SUM(l.valor), 0) as total
-    FROM lancamentos l
-    LEFT JOIN cartoes_credito c ON c.id = l.cartao_id
-    WHERE l.usuario_id = ? AND l.tipo = 'cartao' ${filtroCartao}
+      COALESCE(SUM(CASE WHEN l.tipo = 'cartao' THEN l.valor ELSE 0 END), 0) as total
+    FROM cartoes_credito c
+    LEFT JOIN lancamentos l ON l.cartao_id = c.id
+    WHERE c.usuario_id = ? AND c.ativo = 1 ${filtroCartao}
     GROUP BY c.id, c.nome, c.limite, c.dia_vencimento
     ORDER BY c.nome
   `, params);
@@ -210,7 +210,7 @@ async function responderFatura(userId, nomeCartao) {
   if (rows.length === 0) {
     return nomeCartao
       ? `Nao encontrei fatura para o cartao "${nomeCartao}".`
-      : 'Nenhum gasto em cartao de credito encontrado.';
+      : 'Nenhum cartao cadastrado ainda. Exemplo: "cadastrar cartao Nubank limite 4000 vencimento 10"';
   }
 
   const texto = rows.map(r => {

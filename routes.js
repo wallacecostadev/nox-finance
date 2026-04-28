@@ -320,6 +320,7 @@ async function cadastrarParcelamento(userId, parsed) {
   const dataInicio = parsed.dataInicio || dataHojeISO();
   const dataFim = adicionarMesesISO(dataInicio, Number(parsed.totalParcelas) - 1);
   const status = parcelasPagas >= Number(parsed.totalParcelas) ? 'quitado' : 'ativo';
+  const restante = calcularRestanteParcelamento(parsed, parcelasPagas);
 
   const resultado = await run(getDb(), `
     INSERT INTO parcelamentos (
@@ -348,8 +349,18 @@ async function cadastrarParcelamento(userId, parsed) {
 • Descricao: ${parsed.descricao}
 • Parcela: ${formatarMoeda(parsed.valorParcela)}
 ${parsed.valorTotal ? `• Total: ${formatarMoeda(parsed.valorTotal)}\n` : ''}• Progresso: ${parcelasPagas}/${parsed.totalParcelas}
-• Restante: ${formatarMoeda(parsed.valorParcela * (parsed.totalParcelas - parcelasPagas))}
+• Restante: ${formatarMoeda(restante)}
 • Termina em: ${formatarDataBR(dataFim)}`;
+}
+
+function calcularRestanteParcelamento(parsed, parcelasPagas) {
+  const totalParcelas = Number(parsed.totalParcelas || 0);
+  const restantes = Math.max(0, totalParcelas - Number(parcelasPagas || 0));
+  if (parsed.valorTotal && totalParcelas > 0) {
+    return Math.round((Number(parsed.valorTotal) * (restantes / totalParcelas)) * 100) / 100;
+  }
+
+  return Number(parsed.valorParcela || 0) * restantes;
 }
 
 async function responderParcelamentos(userId, filtro) {

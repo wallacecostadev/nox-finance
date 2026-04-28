@@ -89,6 +89,16 @@ function normalizar(texto) {
     .replace(/\btrezentos\b/g, '300')
     .replace(/\bduzentos\b/g, '200')
     .replace(/\bcem\b/g, '100')
+    .replace(/\bdez\b/g, '10')
+    .replace(/\bnove\b/g, '9')
+    .replace(/\boito\b/g, '8')
+    .replace(/\bsete\b/g, '7')
+    .replace(/\bseis\b/g, '6')
+    .replace(/\bcinco\b/g, '5')
+    .replace(/\bquatro\b/g, '4')
+    .replace(/\btres\b/g, '3')
+    .replace(/\bduas\b/g, '2')
+    .replace(/\bdois\b/g, '2')
     .replace(/\s+/g, ' ')
     .trim();
 }

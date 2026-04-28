@@ -168,6 +168,33 @@ function parsearCadastroCartao(texto) {
   };
 }
 
+function parsearEdicaoCartao(texto) {
+  const mencionaCartao = /(cartao|credito)/.test(texto);
+  const ehEdicao = /(editar|edite|alterar|altere|mudar|mude|ajustar|ajuste|corrigir|corrija|atualizar|atualize)/.test(texto);
+  const temCampoCartao = /(limite|vencimento|vence|fechamento|fecha)/.test(texto);
+
+  if (!mencionaCartao || !ehEdicao || !temCampoCartao) return null;
+
+  return {
+    tipo: 'editar_cartao',
+    nome: extrairNomeCartaoParaComando(texto),
+    limite: extrairNumeroDepoisDe(texto, 'limite'),
+    vencimento: extrairNumeroDepoisDe(texto, 'vencimento') || extrairNumeroDepoisDe(texto, 'vence'),
+    fechamento: extrairNumeroDepoisDe(texto, 'fechamento') || extrairNumeroDepoisDe(texto, 'fecha')
+  };
+}
+
+function parsearExclusaoCartao(texto) {
+  const ehExclusao = /(apagar|excluir|deletar|remover|cancelar)/.test(texto);
+  const mencionaCartao = /(cartao|credito)/.test(texto);
+  if (!ehExclusao || !mencionaCartao) return null;
+
+  return {
+    tipo: 'excluir_cartao',
+    nome: extrairNomeCartaoParaComando(texto)
+  };
+}
+
 function limparNomeCartaoCadastro(nome) {
   const limpo = String(nome || '')
     .replace(/\b(um|uma|o|a|meu|minha|do|da|de)\b/g, '')
@@ -175,6 +202,18 @@ function limparNomeCartaoCadastro(nome) {
     .trim();
 
   return limpo || null;
+}
+
+function extrairNomeCartaoParaComando(texto) {
+  const semAcoes = texto
+    .replace(/\b(editar|edite|alterar|altere|mudar|mude|ajustar|ajuste|corrigir|corrija|atualizar|atualize|apagar|excluir|deletar|remover|cancelar)\b/g, '')
+    .replace(/\b(limite|vencimento|vence|fechamento|fecha|para|de|do|da|com|valor|dia)\b/g, '')
+    .replace(/\d+[.,]?\d*/g, '')
+    .replace(/\b(cartao|credito)\b/g, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+
+  return semAcoes || extrairNomeCartao(texto);
 }
 
 function parsearCorrecao(texto) {
@@ -219,6 +258,12 @@ function limparDescricao(texto) {
 
 function parsearMensagem(mensagem) {
   const texto = normalizar(mensagem);
+
+  const edicaoCartao = parsearEdicaoCartao(texto);
+  if (edicaoCartao) return edicaoCartao;
+
+  const exclusaoCartao = parsearExclusaoCartao(texto);
+  if (exclusaoCartao) return exclusaoCartao;
 
   const cadastroCartao = parsearCadastroCartao(texto);
   if (cadastroCartao) return cadastroCartao;

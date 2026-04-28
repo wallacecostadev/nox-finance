@@ -16,6 +16,8 @@ const testes = [
   'cadastrei meu cartao Nubank com limite de 4000 vencimento dia 10',
   'cartao Nubank limite 4000 vence 10',
   'cartao',
+  'editar cartao Nubank limite 5000 vencimento 15 fechamento 5',
+  'excluir cartao Nubank',
   'gastei 120 no credito Nubank no mercado',
   'fatura Nubank',
   'cartoes',

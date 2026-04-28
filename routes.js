@@ -37,6 +37,8 @@ Nao entendi sua mensagem. Tente:
   if (parsed.tipo === 'fatura') return responderFatura(userId, parsed.cartao);
   if (parsed.tipo === 'listar_cartoes') return responderCartoes(userId);
   if (parsed.tipo === 'cadastrar_cartao') return cadastrarCartao(userId, parsed);
+  if (parsed.tipo === 'editar_cartao') return editarCartao(userId, parsed);
+  if (parsed.tipo === 'excluir_cartao') return excluirCartao(userId, parsed);
   if (parsed.tipo === 'corrigir') return corrigirLancamento(userId, parsed);
   if (parsed.tipo === 'excluir') return excluirLancamento(userId, parsed);
 
@@ -90,6 +92,9 @@ function getTextoAjuda() {
 "fatura"
 "fatura Nubank"
 "cartoes"
+"editar cartao Nubank limite 5000"
+"alterar vencimento do cartao Nubank para 15"
+"excluir cartao Nubank"
 
 *Consultas*
 "saldo atual"
@@ -162,6 +167,58 @@ Vencimento: dia ${parsed.vencimento || 'nao informado'}
 Fechamento: dia ${parsed.fechamento || 'nao informado'}`;
 }
 
+async function editarCartao(userId, parsed) {
+  if (!parsed.nome) {
+    return 'Qual cartao voce quer editar? Exemplo: "editar cartao Nubank limite 5000"';
+  }
+
+  const cartao = await obterCartaoPorNome(userId, parsed.nome);
+  if (!cartao) {
+    return `Nao encontrei o cartao "${parsed.nome}". Use "cartao" para ver os cadastrados.`;
+  }
+
+  const updates = [];
+  const params = [];
+
+  if (parsed.limite !== null && parsed.limite !== undefined) {
+    updates.push('limite = ?');
+    params.push(parsed.limite);
+  }
+
+  if (parsed.vencimento !== null && parsed.vencimento !== undefined) {
+    updates.push('dia_vencimento = ?');
+    params.push(parsed.vencimento);
+  }
+
+  if (parsed.fechamento !== null && parsed.fechamento !== undefined) {
+    updates.push('dia_fechamento = ?');
+    params.push(parsed.fechamento);
+  }
+
+  if (updates.length === 0) {
+    return 'Diga o que quer editar. Exemplo: "editar cartao Nubank limite 5000 vencimento 15"';
+  }
+
+  params.push(cartao.id, userId);
+  await run(getDb(), `UPDATE cartoes_credito SET ${updates.join(', ')} WHERE id = ? AND usuario_id = ?`, params);
+
+  const atualizado = await getCartaoPorId(userId, cartao.id);
+  return `*Cartao atualizado!*\n\nCartao: ${atualizado.nome}\nLimite: ${formatarMoeda(atualizado.limite || 0)}\nVencimento: dia ${atualizado.dia_vencimento || 'nao informado'}\nFechamento: dia ${atualizado.dia_fechamento || 'nao informado'}`;
+}
+
+async function excluirCartao(userId, parsed) {
+  if (!parsed.nome) {
+    return 'Qual cartao voce quer excluir? Exemplo: "excluir cartao Nubank"';
+  }
+
+  const cartao = await obterCartaoPorNome(userId, parsed.nome);
+  if (!cartao) {
+    return `Nao encontrei o cartao "${parsed.nome}". Use "cartao" para ver os cadastrados.`;
+  }
+
+  await run(getDb(), 'UPDATE cartoes_credito SET ativo = 0 WHERE id = ? AND usuario_id = ?', [cartao.id, userId]);
+  return `Cartao ${cartao.nome} removido da sua lista. Os lancamentos antigos continuam no extrato.`;
+}
 async function responderCartoes(userId) {
   const cartoes = await all(getDb(), `
     SELECT c.*,
@@ -177,12 +234,18 @@ async function responderCartoes(userId) {
     return 'Nenhum cartao cadastrado ainda. Exemplo: "cadastrar cartao Nubank limite 4000 vencimento 10"';
   }
 
-  const texto = cartoes.map(c => {
-    const disponivel = Number(c.limite || 0) - Number(c.fatura || 0);
-    return `${c.nome}: fatura ${formatarMoeda(c.fatura)}, limite ${formatarMoeda(c.limite || 0)}, disponivel ${formatarMoeda(disponivel)}, vence dia ${c.dia_vencimento || '-'}`;
-  }).join('\n');
+  const totalFatura = cartoes.reduce((sum, c) => sum + Number(c.fatura || 0), 0);
+  const totalLimite = cartoes.reduce((sum, c) => sum + Number(c.limite || 0), 0);
+  const blocos = cartoes.map(c => {
+    const limite = Number(c.limite || 0);
+    const fatura = Number(c.fatura || 0);
+    const disponivel = limite - fatura;
+    const uso = limite > 0 ? Math.round((fatura / limite) * 100) : 0;
 
-  return `*Meus cartoes*\n\n${texto}`;
+    return `*${c.nome}*\nFatura: ${formatarMoeda(fatura)}\nLimite: ${formatarMoeda(limite)}\nDisponivel: ${formatarMoeda(disponivel)}\nUso: ${uso}%\nVencimento: dia ${c.dia_vencimento || '-'}\nFechamento: dia ${c.dia_fechamento || '-'}`;
+  }).join('\n\n');
+
+  return `*Meus cartoes*\n\n${blocos}\n\n*Resumo*\nFatura total: ${formatarMoeda(totalFatura)}\nLimite total: ${formatarMoeda(totalLimite)}\nDisponivel total: ${formatarMoeda(totalLimite - totalFatura)}`;
 }
 
 async function responderFatura(userId, nomeCartao) {
@@ -374,6 +437,15 @@ async function obterCartaoParaLancamento(userId, nomeCartao) {
 
 async function getCartaoPorId(userId, cartaoId) {
   return get(getDb(), 'SELECT * FROM cartoes_credito WHERE usuario_id = ? AND id = ?', [userId, cartaoId]);
+}
+
+async function obterCartaoPorNome(userId, nomeCartao) {
+  return get(getDb(), `
+    SELECT * FROM cartoes_credito
+    WHERE usuario_id = ? AND lower(nome) LIKE ? AND ativo = 1
+    ORDER BY nome
+    LIMIT 1
+  `, [userId, `%${String(nomeCartao).toLowerCase()}%`]);
 }
 
 async function obterLancamentoAlvo(userId, parsed) {

@@ -17,6 +17,8 @@ const ZAPI_INSTANCE = process.env.ZAPI_INSTANCE;
 const ZAPI_TOKEN = process.env.ZAPI_TOKEN;
 const ZAPI_CLIENT_TOKEN = process.env.ZAPI_CLIENT_TOKEN;
 const ZAPI_BASE_URL = `https://api.z-api.io/instances/${ZAPI_INSTANCE}/token/${ZAPI_TOKEN}`;
+const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
+const TRANSCRIPTION_MODEL = process.env.TRANSCRIPTION_MODEL || 'gpt-4o-mini-transcribe';
 
 // Middleware
 app.use(express.json());
@@ -36,19 +38,30 @@ app.post('/webhook', async (req, res) => {
       return res.json({ success: true, ignored: true, reason: 'Mensagem enviada pelo proprio numero' });
     }
 
-    const { phone, message } = extrairMensagemRecebida(req.body);
+    const { phone, message, audioUrl, mimeType } = extrairMensagemRecebida(req.body);
 
-    if (!phone || !message) {
+    if (!phone || (!message && !audioUrl)) {
       return res.json({ success: true, ignored: true, reason: 'Evento sem texto para processar' });
     }
 
+    let mensagemProcessada = message;
+    if (!mensagemProcessada && audioUrl) {
+      await enviarMensagem(phone, 'Recebi seu audio. Vou transcrever e registrar aqui.');
+      mensagemProcessada = await transcreverAudio(audioUrl, mimeType);
+      console.log(`Audio transcrito para ${phone}: ${mensagemProcessada}`);
+    }
+
     // Processa a mensagem e obtem resposta
-    const resposta = await processarMensagem(phone, message);
+    const resposta = await processarMensagem(phone, mensagemProcessada);
 
     // Envia resposta de volta para o WhatsApp
-    await enviarMensagem(phone, resposta);
+    const respostaFinal = audioUrl
+      ? `Transcricao: "${mensagemProcessada}"\n\n${resposta}`
+      : resposta;
 
-    res.json({ success: true, resposta });
+    await enviarMensagem(phone, respostaFinal);
+
+    res.json({ success: true, resposta: respostaFinal });
   } catch (error) {
     console.error('Erro no webhook:', error);
     res.status(500).json({ error: 'Erro ao processar mensagem' });
@@ -86,10 +99,67 @@ function extrairMensagemRecebida(body) {
     body.text ||
     body.caption;
 
+  const audioUrl =
+    body.audio?.audioUrl ||
+    body.audioUrl ||
+    body.voice?.audioUrl ||
+    body.ptt?.audioUrl;
+
+  const mimeType =
+    body.audio?.mimeType ||
+    body.mimeType ||
+    'audio/ogg';
+
   return {
     phone: phone ? String(phone).replace(/\D/g, '') : null,
-    message: message ? String(message).trim() : null
+    message: message ? String(message).trim() : null,
+    audioUrl,
+    mimeType
   };
+}
+
+async function transcreverAudio(audioUrl, mimeType = 'audio/ogg') {
+  if (!OPENAI_API_KEY) {
+    throw new Error('OPENAI_API_KEY precisa estar configurada para transcrever audio');
+  }
+
+  const audioResponse = await axios.get(audioUrl, {
+    responseType: 'arraybuffer',
+    headers: ZAPI_CLIENT_TOKEN ? { 'Client-Token': ZAPI_CLIENT_TOKEN } : undefined
+  });
+
+  const audioBuffer = Buffer.from(audioResponse.data);
+  const form = new FormData();
+  const filename = getNomeArquivoAudio(mimeType);
+
+  form.append('file', new Blob([audioBuffer], { type: mimeType }), filename);
+  form.append('model', TRANSCRIPTION_MODEL);
+  form.append('language', 'pt');
+  form.append('prompt', 'Transcreva comandos financeiros em portugues do Brasil, preservando valores, formas de pagamento, nomes de cartoes e categorias.');
+
+  const response = await fetch('https://api.openai.com/v1/audio/transcriptions', {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${OPENAI_API_KEY}`
+    },
+    body: form
+  });
+
+  const data = await response.json();
+
+  if (!response.ok) {
+    throw new Error(`Erro ao transcrever audio: ${data.error?.message || response.statusText}`);
+  }
+
+  return String(data.text || '').trim();
+}
+
+function getNomeArquivoAudio(mimeType) {
+  if (mimeType.includes('mpeg') || mimeType.includes('mp3')) return 'audio.mp3';
+  if (mimeType.includes('mp4') || mimeType.includes('m4a')) return 'audio.m4a';
+  if (mimeType.includes('wav')) return 'audio.wav';
+  if (mimeType.includes('webm')) return 'audio.webm';
+  return 'audio.ogg';
 }
 
 // Funcao para enviar mensagem via Z-API
